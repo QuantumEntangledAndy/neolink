@@ -29,14 +29,17 @@ bc_protocol.fields = {
 message_types = {
   [1]="login",
   [3]="<Preview> (video)",
+  [33]="<AlarmEventList>",
   [58]="<AbilitySupport>",
   [78]="<VideoInput>",
   [79]="<Serial>",
   [80]="<VersionInfo>",
+  [102]="<HDDInfoList>",
   [114]="<Uid>",
-  [133]="<RfAlarm>"
+  [133]="<RfAlarm>",
   [146]="<StreamInfoList>",
   [151]="<AbilityInfo>",
+  [199]="<Support>",
   [230]="<cropSnap>",
 }
 
@@ -55,7 +58,7 @@ header_lengths = {
 }
 
 function xml_encrypt(ba, offset)
-  local key = "\031\045\060\075\090\105\120\255"
+  local key = "\031\045\060\075\090\105\120\255" -- 1f, 2d, 3c, 4b, 5a, 69, 78 ,ff
   local e = ByteArray.new()
   e:set_size(ba:len())
   for i=0,ba:len() - 1 do
@@ -135,19 +138,20 @@ function process_body(header, body_buffer, bc_subtree, pinfo)
     end
     local xml_buffer = body_buffer(0, xml_len)
     if xml_len > 0 then
-      local body_tvb = xml_buffer:tvb()
+      local body_tvb = xml_buffer:tvb("Payload")
       if xml_len >= 4 then
-        if xml_encrypt(binary_buffer(0,5):bytes(), header.enc_offset):raw() == "<?xml" then -- Encrypted xml found
-          body:add(body_tvb(), "XML Payload")
+        if xml_encrypt(xml_buffer(0,5):bytes(), header.enc_offset):raw() == "<?xml" then -- Encrypted xml found
           local ba = xml_buffer:bytes()
           local decrypted = xml_encrypt(ba, header.enc_offset)
           body_tvb = decrypted:tvb("Decrypted XML")
           -- Create a tree item that, when clicked, automatically shows the tab we just created
           body:add(body_tvb(), "Decrypted XML")
           Dissector.get("xml"):call(body_tvb, pinfo, body)
-        elseif binary_buffer(0,5):string() == "<?xml" then  -- Unencrypted xml
-          body:add(body_tvb(), "Decrypted XML")
+        elseif xml_buffer(0,5):string() == "<?xml" then  -- Unencrypted xml
+          body:add(body_tvb(), "XML")
           Dissector.get("xml"):call(body_tvb, pinfo, body)
+        else
+          body:add(body_tvb(), "Binary")         
         end
       end
     end
@@ -156,6 +160,7 @@ function process_body(header, body_buffer, bc_subtree, pinfo)
       local bin_len = header.msg_len - header.bin_offset
       if bin_len > 0 then
         local binary_buffer = body_buffer(header.bin_offset, bin_len) -- Don't extend beyond msg size
+        body_tvb = binary_buffer:tvb("Binary Payload");
         if bin_len > 4 then
           if xml_encrypt(binary_buffer(0,5):bytes(), header.enc_offset):raw() == "<?xml" then -- Encrypted xml found
             local decrypted = xml_encrypt(binary_buffer:bytes(), header.enc_offset)
@@ -163,10 +168,12 @@ function process_body(header, body_buffer, bc_subtree, pinfo)
             -- Create a tree item that, when clicked, automatically shows the tab we just created
             body:add(body_tvb(), "Decrypted XML (in binary block)")
             Dissector.get("xml"):call(body_tvb, pinfo, body)
+          elseif binary_buffer(0,5):string() == "<?xml" then  -- Unencrypted xml
+            body:add(body_tvb(), "XML (in binary block)") 
+            Dissector.get("xml"):call(body_tvb, pinfo, body)
+          else
+            body:add(body_tvb(), "Binary")    
           end
-        else
-          local binary_tvb = binary_buffer:tvb()
-          body:add(binary_tvb(), "Binary Payload")
         end
       end
     end
@@ -256,4 +263,4 @@ function bc_protocol.dissector(buffer, pinfo, tree)
 end
 
 DissectorTable.get("tcp.port"):add(9000, bc_protocol)
-DissectorTable.get("tcp.port"):add(52941, bc_protocol)
+DissectorTable.get("tcp.port"):add(52941, bc_protocol) -- change to your own custom port
