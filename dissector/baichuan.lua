@@ -12,7 +12,7 @@ encrypt_xml = ProtoField.bool("baichuan.encrypt_xml", "encrypt_xml", base.NONE)
 channel_id =  ProtoField.int8("baichuan.channel_id", "channel_id", base.DEC)
 stream_id = ProtoField.int8("baichuan.stream_id", "streamID", base.DEC)
 unknown = ProtoField.int8("baichuan.unknown", "unknown", base.DEC)
-msg_handle = ProtoField.int8("baichuan.message_handle", "messageHandle", base.DEC)
+msg_number = ProtoField.int8("baichuan.message_number", "messageNumber", base.DEC)
 status_code = ProtoField.int16("baichuan.status_code", "status_code", base.DEC)
 message_class = ProtoField.int32("baichuan.msg_class", "messageClass", base.DEC)
 f_payload_offset = ProtoField.int32("baichuan.payload_offset", "binOffset", base.DEC)
@@ -27,7 +27,7 @@ bc_protocol.fields = {
   channel_id,
   stream_id,
   unknown,
-  msg_handle,
+  msg_number,
   encrypt_xml,
   status_code,
   message_class,
@@ -205,8 +205,7 @@ function get_header(buffer)
     channel_id = buffer(12, 1):le_uint(),
     enc_offset = buffer(12, 1):le_uint(),
     stream_type = stream_text,
-    unknown = buffer(14, 1):le_uint(),
-    msg_handle = buffer(15, 1):le_uint(),
+    msg_number = buffer(14, 2):le_uint(),
     msg_cls = buffer(18, 2):le_uint(),
     status_code = status_code,
     class = message_classes[buffer(18, 2):le_uint()],
@@ -234,14 +233,13 @@ function process_header(buffer, headers_tree)
   header:add_le(channel_id, buffer(12, 1))
   header:add_le(stream_id, buffer(13, 1))
         :append_text(stream_text)
-  header:add_le(unknown, buffer(14, 1))
-  header:add_le(msg_handle, buffer(15, 1))
+  header:add_le(msg_number, buffer(14, 2))
 
   header:add_le(message_class, buffer(18, 2)):append_text(" (" .. header_data.class .. ")")
 
   if header_data.header_len == 24 then
     header:add_le(status_code, buffer(16, 2))
-    header:add_le(f_bin_offset, buffer(20, 4))
+    header:add_le(f_payload_offset, buffer(20, 4))
   else
     header:add_le(encrypt_xml, buffer(16, 1))
   end
@@ -268,21 +266,22 @@ function process_body(header, body_buffer, bc_subtree, pinfo)
     end
     local xml_buffer = body_buffer(0, xml_len)
     if xml_len > 0 then
-      local body_tvb = xml_buffer:tvb("Meta Payload")
-      body:add(body_tvb(), "Meta Payload")
+      local body_tvb = xml_buffer:tvb("Extension Payload")
+      body:add(body_tvb(), "Extension Payload")
       if xml_len >= 4 then
         if xml_encrypt(xml_buffer(0,5):bytes(), header.enc_offset):raw() == "<?xml" then -- Encrypted xml found
           local ba = xml_buffer:bytes()
           local decrypted = xml_encrypt(ba, header.enc_offset)
-          body_tvb = decrypted:tvb("Decrypted XML (in Meta Payload)")
+          body_tvb = decrypted:tvb("Decrypted XML (in Extension Payload)")
           -- Create a tree item that, when clicked, automatically shows the tab we just created
-          body:add(body_tvb(), "Decrypted XML (in Meta Payload)")
+          body:add(body_tvb(), "Decrypted XML (in Extension Payload)")
           Dissector.get("xml"):call(body_tvb, pinfo, body)
         elseif xml_buffer(0,5):string() == "<?xml" then  -- Unencrypted xml
-          body:add(body_tvb(), "XML (in Meta Payload)")
+          body:add(body_tvb(), "XML (in Extension Payload)")
           Dissector.get("xml"):call(body_tvb, pinfo, body)
         else
-          body:add(body_tvb(), "Binary (in Meta Payload)")
+          -- The Extension payload should always be xml but this is here as a fail safe
+          body:add(body_tvb(), "Binary (in Extension Payload)")
         end
       end
     end
