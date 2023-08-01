@@ -55,6 +55,7 @@ struct ConnectResult {
 struct UidLookupResults {
     reg: SocketAddr,
     relay: SocketAddr,
+    addr: SocketAddr,
 }
 
 pub(crate) struct Discovery {}
@@ -363,7 +364,7 @@ impl Discoverer {
     ///
     /// On success it returns the M2cQr that the p2p relay
     /// server has about the UID
-    async fn uid_loopup(&self, uid: &str) -> Result<UidLookupResults> {
+    async fn uid_loopup(&self, uid: &str, avoid: &Vec<SocketAddr>) -> Result<UidLookupResults> {
         let task = tokio::task::spawn_blocking(move || {
             let mut addrs = vec![];
             for p2p_relay in P2P_RELAY_HOSTNAMES.iter() {
@@ -389,7 +390,7 @@ impl Discoverer {
             },
         };
         trace!("Sending look up {:?}", msg);
-        let (packet, _) = self
+        let (packet, addr) = self
             .retry_send_multi(msg, addrs.as_slice(), |bc, addr| match bc {
                 UdpDiscovery {
                     tid: _,
@@ -398,7 +399,7 @@ impl Discoverer {
                             m2c_q_r: Some(m2c_q_r),
                             ..
                         },
-                } if m2c_q_r.reg.port != 0 || !m2c_q_r.reg.ip.is_empty() => Some((m2c_q_r, addr)),
+                } if (m2c_q_r.reg.port != 0 || !m2c_q_r.reg.ip.is_empty()) && !avoid.contains(&addr) => Some((m2c_q_r, addr)),
                 _ => None,
             })
             .await?;
@@ -406,6 +407,7 @@ impl Discoverer {
         Ok(UidLookupResults {
             reg: SocketAddr::new(packet.reg.ip.parse()?, packet.reg.port),
             relay: SocketAddr::new(packet.relay.ip.parse()?, packet.relay.port),
+            addr
         })
     }
 
@@ -1028,6 +1030,7 @@ impl Discovery {
         })
     }
 
+
     // This will start remote discovery against the reolink p2p servers
     //
     // This works by registering our ip and intent to connect with the reolink
@@ -1041,17 +1044,12 @@ impl Discovery {
     #[allow(unused)]
     pub(crate) async fn remote(uid: &str) -> Result<DiscoveryResult> {
         trace!("Start remote");
-        let mut discoverer = Discoverer::new().await?;
+        let discoverer = Discoverer::new().await?;
 
         let client_id = generate_cid();
         trace!("client_id: {}", client_id);
 
-        let lookup = discoverer.uid_loopup(uid).await?;
-        trace!("lookup: {:?}", lookup);
-        let reg_addr = lookup.reg;
-        let relay_addr = lookup.relay;
-
-        let reg_result = discoverer.register_address(uid, client_id, &lookup).await?;
+        let reg_result = lookup_and_register(uid, client_id, &discoverer).await?;
         trace!("reg_result: {:?}", reg_result);
 
         let connect_result = tokio::select! {
@@ -1079,15 +1077,13 @@ impl Discovery {
     // This method should be used when the camera is behind a NAT or firewall but we are
     // reachable
     pub(crate) async fn map(uid: &str) -> Result<DiscoveryResult> {
+        trace!("Start map");
         let discoverer = Discoverer::new().await?;
 
         let client_id = generate_cid();
         trace!("client_id: {}", client_id);
 
-        let lookup = discoverer.uid_loopup(uid).await?;
-        trace!("lookup: {:?}", lookup);
-
-        let reg_result = discoverer.register_address(uid, client_id, &lookup).await?;
+        let reg_result = lookup_and_register(uid, client_id, &discoverer).await?;
         trace!("reg_result: {:?}", reg_result);
 
         let connect_result = discoverer.device_initiated_map(&reg_result).await?;
@@ -1109,19 +1105,18 @@ impl Discovery {
     // us to trust reolink with our data once more...
     //
     pub(crate) async fn relay(uid: &str) -> Result<DiscoveryResult> {
+        trace!("Start relay");
         let discoverer = Discoverer::new().await?;
-        let client_id = generate_cid();
 
+        let client_id = generate_cid();
         trace!("client_id: {}", client_id);
 
-        let lookup = discoverer.uid_loopup(uid).await?;
-        trace!("lookup: {:?}", lookup);
-
-        let reg_result = discoverer.register_address(uid, client_id, &lookup).await?;
+        let reg_result = lookup_and_register(uid, client_id, &discoverer).await?;
         trace!("reg_result: {:?}", reg_result);
 
         let connect_result = discoverer.client_initiated_relay(&reg_result).await?;
         trace!("connect_result: {:?}", connect_result);
+
 
         let (socket, keep_alive_tasks) = discoverer.into_socket().await;
         Ok(DiscoveryResult {
@@ -1131,6 +1126,30 @@ impl Discovery {
             client_id,
             camera_id: connect_result.camera_id,
         })
+    }
+}
+
+// This performs lookup and register loop to avoid choosing the same registry endpoint that can
+// cause the problem with only trying to register in one relay that is not responding
+// It is especially useful when using relay option from different geolocations
+async fn lookup_and_register(uid: &str, client_id: i32, discoverer: &Discoverer) -> Result<RegisterResult> {
+    let mut avoid: Vec<SocketAddr> = vec![];
+    loop {
+        trace!("avoiding those already tried addresses {:?} ", &avoid);
+        let lookup = discoverer.uid_loopup(uid, &avoid).await?;
+        trace!("lookup: {:?}", lookup);
+
+        let reg_try = discoverer.register_address(uid, client_id, &lookup).await;
+        match reg_try {
+            Ok(result) => return Ok(result),
+            Err(_) => {
+                avoid.push(lookup.addr);
+                if avoid.len() < P2P_RELAY_HOSTNAMES.len() {
+                    continue;
+                }
+                return Err(Error::RegisterError)
+            }
+        };
     }
 }
 
