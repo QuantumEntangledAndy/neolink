@@ -213,6 +213,8 @@ Control messages:
 - `/control/ptz/assign [id] [name]` Set the current PTZ position to a preset ID
   and name
 - `/control/pir [on|off]`
+- `/control/siren on` Signal the siren, the message is always "on" as there is no
+  "off" signal for the siren
 
 Status Messages:
 
