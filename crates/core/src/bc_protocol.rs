@@ -29,6 +29,7 @@ mod pirstate;
 mod ptz;
 mod reboot;
 mod resolution;
+mod siren;
 mod snap;
 mod stream;
 mod stream_info;
