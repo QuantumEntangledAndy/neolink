@@ -137,6 +137,10 @@ jobs:
             gcc: i686-linux-gnu
             # on i686, the pkgconfig path doesn't match the prefix!
             pkgconfig: i386-linux-gnu
+          - arch: mipsel
+            target: mips-unknown-linux-gnu
+            gcc: mips-linux-gnu
+            pkgconfig: mips-linux-gnu 
     steps:
       - uses: actions/checkout@v3
       - name: Install basic tools
