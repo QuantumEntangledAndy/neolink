@@ -385,7 +385,8 @@ password = "password"
 uid = "ABCDEF0123456789"
 debug = false # Displays Debug XML messages from camera
 enabled = true # Enable or Disable the camera
-print_format = "Xml"  # Type of format that logs are displayed in (None, Human, Xml). The default is None
+update_time = false # When camera connects, set the camera date/time to now. The default is false
+print_format = "None"  # Type of format that logs are displayed in (None, Human, Xml). The default is None
 use_splash = true # Display a splash screen when disconnected
 splash_pattern = "Snow" # Change style of splash screen (https://gstreamer.freedesktop.org/documentation/videotestsrc/index.html?gi-language=c#GstVideoTestSrcPattern)
 ```
