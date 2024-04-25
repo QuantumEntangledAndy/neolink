@@ -373,6 +373,23 @@ Available features are:
 - `battery`: This adds a battery level sensor to home assistant
 - `siren`: Adds a siren button to home assistant
 
+### Extra Camera Settings
+
+Listed below are extra camera settings:
+
+```toml
+[[cameras]]
+name = "Camera01"
+username = "admin"
+password = "password"
+uid = "ABCDEF0123456789"
+debug = false # Displays Debug XML messages from camera
+enabled = true # Enable or Disable the camera
+print_format = "Xml"  # Type of format that logs are displayed in (None, Human, Xml). The default is None
+use_splash = true # Display a splash screen when disconnected
+splash_pattern = "Snow" # Change style of splash screen (https://gstreamer.freedesktop.org/documentation/videotestsrc/index.html?gi-language=c#GstVideoTestSrcPattern)
+```
+
 ### Pause
 
 To use the pause feature you will need to adjust your config file as such:
