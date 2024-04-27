@@ -465,6 +465,8 @@ There are currently 2 environmental variables available as part of the container
 
 This is a quick example on how to use the Dockerfile with the compose system. It is important to note that a docker compose `environment:` tag is runtime enviroment variables, but the aforementioned Dockerfile environment variables must be set at build time. In the example, this mode is set by directly setting the command to the value you want. Change `rtsp` to the neolink mode you wish to run.
 
+To use the following example you should make a compose file in the same directory as your config file named `neolink.toml`. If not, you will need to update the volume tag. To run the container use the command `docker compose up`. To run the container in detatched mode and in the background, instead run `docker compose up -d`.
+
 ```yaml
 version: '3.8'
 services:
