@@ -100,7 +100,7 @@ impl PushNotiThread {
                         Ok,
                     )
                     .expect("Unable to create directory for push notification settings: {d:?}");
-                d.push("./neolink_token.toml");
+                d.push("neolink_token.toml");
                 d
             });
             log::debug!("Push notification details are saved to {:?}", token_path);
