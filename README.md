@@ -570,6 +570,24 @@ neolink ptz --config=config.toml CameraName zoom 2.5
 
 With 1.0 being normal and 2.5 being 2.5x zoom
 
+### Enabling services (http, https, rtmp, rtsp and onvif)
+
+**For newer cameras that have services on the camera hardware. These can be enabled with the `services` command.**
+
+This is not related to the `rtsp` mode of neolink which is a separate feature.
+
+For example, to enable the http port:
+```bash
+neolink services --config=/etc/neolink.toml CameraName http on
+```
+
+To disable it:
+```bash
+neolink services --config=/etc/neolink.toml CameraName http off
+```
+
+Note that this might not work on older camera models.
+
 ## License
 
 Neolink is free software, released under the GNU Affero General Public License
