@@ -182,6 +182,7 @@ jobs:
           echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
       - name: Install ${{ matrix.arch }} Rust toolchain
         run: |
+          rustup default 1.79.0
           rustup target add ${TARGET}
         env:
           TARGET: ${{ matrix.target }}
