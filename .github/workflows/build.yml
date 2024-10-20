@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+          description: 'Tag to force the cross build on'
+          required: false
+          type: string
+          default: ''
 
 jobs:
   pre_job:
@@ -158,6 +164,8 @@ jobs:
             pkgconfig: i386-linux-gnu
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag }}
       - name: Install basic tools
         run: |
           apt-get update
