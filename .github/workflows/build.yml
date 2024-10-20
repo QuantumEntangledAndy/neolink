@@ -226,6 +226,8 @@ jobs:
           SECRET: "${{ secrets.DOCKER_TOKEN }}"
       - name: Check out the repo
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag }}
         if: ${{ steps.vars.outputs.HAS_SECRET_TOKEN }}
       - name: Convert username to lower case for docker
         id: string_user
