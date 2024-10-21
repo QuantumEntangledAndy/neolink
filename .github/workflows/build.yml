@@ -73,6 +73,7 @@ jobs:
 
           # Set up pkgconfig for gstreamer
           $env:PKG_CONFIG_PATH += ';' + $env:GSTREAMER_1_0_ROOT_MSVC_X86_64 + '\lib\pkgconfig'
+          dir "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\lib\pkgconfig"
 
           # Set github vars
           Add-Content -Path $env:GITHUB_ENV  -Value "GSTREAMER_1_0_ROOT_MSVC_X86_64=$env:GSTREAMER_1_0_ROOT_MSVC_X86_64"
