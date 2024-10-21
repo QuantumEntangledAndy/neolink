@@ -374,6 +374,36 @@ Available features are:
 - `battery`: This adds a battery level sensor to home assistant
 - `siren`: Adds a siren button to home assistant
 
+### Extra Camera Settings
+
+Listed below are extra camera settings:
+
+```toml
+[[cameras]]
+name = "Camera01"
+username = "admin"
+password = "password"
+uid = "ABCDEF0123456789"
+debug = false # Displays Debug XML messages from camera
+enabled = true # Enable or Disable the camera
+update_time = false # When camera connects, force the setting of the camera date/time to now. The default is false
+print_format = "None"  # Type of format that logs are displayed in (None, Human, Xml). The default is None
+```
+
+- **Debug:** Will dump the various XMLs from the camera as they are recieved
+and decrypted. Leave this off unless asked for it to fix an issue.
+
+- **Enabled:** Useful if you want to remove a camera from rtsp without deleting
+it from the config
+
+- **update_time:** Used to FORCE an update on the camera time. Usually it checks
+if it is needed but this
+will force it regardless. (Mostly this was introduced to address a specific
+ssue a user had)
+
+- **print_format:** Used for adjusting printing of some values mostly, battery
+messages
+
 ### Pause
 
 To use the pause feature you will need to adjust your config file as such:
