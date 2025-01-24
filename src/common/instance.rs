@@ -15,7 +15,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::{AiState, MdState, NeoCamCommand, NeoCamThreadState, Permit, UseCounter, VisitorState};
+use super::{AiState, MdState, NeoCamCommand, NeoCamThreadState, Permit, VisitorState};
 use crate::{config::CameraConfig, AnyResult, Result};
 use neolink_core::bc_protocol::BcCamera;
 #[cfg(feature = "gstreamer")]

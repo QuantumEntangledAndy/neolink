@@ -86,7 +86,7 @@ jobs:
       - if: runner.os == 'macOS'
         name: Install macOS deps
         run: |
-          curl -L 'https://gstreamer.freedesktop.org/data/pkg/osx/1.20.4/gstreamer-1.0-devel-1.20.4-universal.pkg' -o "$(pwd)/gstreamer-devel.pkg"
+          curl -L 'https://gstreamer.freedesktop.org/data/pkg/osx/1.24.11/gstreamer-1.0-devel-1.24.11-universal.pkg' -o "$(pwd)/gstreamer-devel.pkg"
           sudo installer -verbose -pkg "$(pwd)/gstreamer-devel.pkg" -target /
           PKG_CONFIG_PATH="/Library/Frameworks/GStreamer.framework/Versions/1.0/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
           PKG_CONFIG_GSTREAMER_1_0_PREFIX="/Library/Frameworks/GStreamer.framework/Versions/1.0"
