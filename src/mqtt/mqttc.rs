@@ -122,7 +122,7 @@ struct MqttBackend<'a> {
     cancel: CancellationToken,
 }
 
-impl<'a> MqttBackend<'a> {
+impl MqttBackend<'_> {
     async fn run(&mut self) -> AnyResult<()> {
         log::trace!("Run MQTT Server");
         let mut mqttoptions = MqttOptions::new(

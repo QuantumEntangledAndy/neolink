@@ -77,7 +77,7 @@ mod discovery;
 mod mqttc;
 
 use crate::{
-    common::{MdState, NeoInstance, NeoReactor},
+    common::{AiState, MdState, NeoInstance, NeoReactor, VisitorState},
     config::Config,
     AnyResult,
 };
@@ -331,6 +331,12 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                 let camera_motion = camera.clone();
                 let mqtt_motion = mqtt_instance.resubscribe().await?;
 
+                let camera_visitor = camera.clone();
+                let mqtt_visitor = mqtt_instance.resubscribe().await?;
+
+                let camera_ai = camera.clone();
+                let mqtt_ai = mqtt_instance.resubscribe().await?;
+
                 #[cfg(feature = "pushnoti")]
                 let camera_pn = camera.clone();
                 #[cfg(feature = "pushnoti")]
@@ -476,6 +482,60 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                             }?;
                         }
                     }, if config.enable_motion => v,
+                    // Handle the visitor messages
+                    v = async {
+                        let mut vis = camera_visitor.visitor().await?;
+                        loop {
+                            let v = async {
+                                vis.wait_for(|state| matches!(state, VisitorState::Visted(_))).await.with_context(|| {
+                                    format!("{}: MdStart Watch Dropped", camera_name)
+                                })?;
+                                mqtt_visitor.send_message("status/visitor", "visitor", true).await.with_context(|| {
+                                    format!("{}: Failed to publish motion start", camera_name)
+                                })?;
+                                AnyResult::Ok(())
+                            }.await;
+                            match v.map_err(|e| e.downcast::<neolink_core::Error>()) {
+                                Err(Ok(neolink_core::Error::UnintelligibleReply{..})) => futures::future::pending().await,
+                                Ok(()) => AnyResult::Ok(()),
+                                Err(Ok(e)) => Err(e.into()),
+                                Err(Err(e)) => Err(e),
+                            }?;
+                        }
+                    }, if config.enable_visitor => v,
+                    // Handle the ai messages
+                    v = async {
+                        let mut ai = camera_ai.ai().await?;
+                        loop {
+                            let v = async {
+                                let ai_kind = {
+                                    let ai_state = ai.wait_for(|state| !matches!(state, AiState::Unknown)).await.with_context(|| {
+                                        format!("{}: MdStart Watch Dropped", camera_name)
+                                    })?;
+                                    match &*ai_state {
+                                        AiState::Person(_) => "person",
+                                        AiState::Car(_) => "car",
+                                        AiState::Other(_) => "other",
+                                        AiState::Unknown => unreachable!(),
+                                    }
+                                };
+
+                                mqtt_ai.send_message("status/ai", ai_kind, true).await.with_context(|| {
+                                    format!("{}: Failed to publish motion start", camera_name)
+                                })?;
+                                mqtt_ai.send_message(&format!("status/ai/{}", ai_kind), ai_kind, true).await.with_context(|| {
+                                    format!("{}: Failed to publish motion start", camera_name)
+                                })?;
+                                AnyResult::Ok(())
+                            }.await;
+                            match v.map_err(|e| e.downcast::<neolink_core::Error>()) {
+                                Err(Ok(neolink_core::Error::UnintelligibleReply{..})) => futures::future::pending().await,
+                                Ok(()) => AnyResult::Ok(()),
+                                Err(Ok(e)) => Err(e.into()),
+                                Err(Err(e)) => Err(e),
+                            }?;
+                        }
+                    }, if config.enable_ai => v,
                     // Handle the SNAP (image preview)
                     v = async {
                         let mut wait = IntervalStream::new({

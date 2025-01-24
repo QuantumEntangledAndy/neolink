@@ -20,8 +20,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    MdRequest, MdState, NeoCamMdThread, NeoCamThread, NeoCamThreadState, NeoInstance, Permit,
-    UseCounter,
+    AiState, MdRequest, MdState, NeoCamMdThread, NeoCamThread, NeoCamThreadState, NeoInstance,
+    Permit, UseCounter, VisitorState,
 };
 #[cfg(feature = "pushnoti")]
 use super::{PnRequest, PushNoti};
@@ -33,6 +33,8 @@ pub(crate) enum NeoCamCommand {
     HangUp,
     Instance(OneshotSender<Result<NeoInstance>>),
     Motion(OneshotSender<WatchReceiver<MdState>>),
+    Visitor(OneshotSender<WatchReceiver<VisitorState>>),
+    Ai(OneshotSender<WatchReceiver<AiState>>),
     Config(OneshotSender<WatchReceiver<CameraConfig>>),
     Disconnect(OneshotSender<()>),
     Connect(OneshotSender<()>),
@@ -109,7 +111,21 @@ impl NeoCam {
                             }
                             NeoCamCommand::Motion(sender) => {
                                 md_request_tx.send(
-                                    MdRequest::Get {
+                                    MdRequest::Md {
+                                        sender,
+                                    }
+                                ).await?;
+                            },
+                            NeoCamCommand::Visitor(sender) => {
+                                md_request_tx.send(
+                                    MdRequest::Visitor {
+                                        sender,
+                                    }
+                                ).await?;
+                            },
+                            NeoCamCommand::Ai(sender) => {
+                                md_request_tx.send(
+                                    MdRequest::Ai {
                                         sender,
                                     }
                                 ).await?;

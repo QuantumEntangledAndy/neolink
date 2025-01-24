@@ -5,15 +5,30 @@ use tokio::sync::mpsc::{channel, error::TryRecvError, Receiver};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-/// Motion Status that the callback can send
+/// Motion Events that the callback can send
 #[derive(Clone, Copy, Debug)]
-pub enum MotionStatus {
+pub enum MotionEvents {
     /// Sent when motion is first detected
     Start(Instant),
     /// Sent when motion stops
     Stop(Instant),
+    /// Sent when a doorbell is pressed
+    Vistor(Instant),
+    /// Sent when an AI is recieved
+    Ai(Instant, AiKind),
     /// Sent when an Alarm about something other than motion was received
     NoChange(Instant),
+}
+
+#[derive(Clone, Copy, Debug)]
+/// The kinds of objects the AI can detect
+pub enum AiKind {
+    /// A person
+    Person,
+    /// A car
+    Car,
+    /// Something else, open a PR to fix with actual thing
+    Other,
 }
 
 /// A handle on current motion related events comming from the camera
@@ -22,8 +37,14 @@ pub enum MotionStatus {
 pub struct MotionData {
     handle: JoinSet<Result<()>>,
     cancel: CancellationToken,
-    rx: Receiver<Result<MotionStatus>>,
-    last_update: MotionStatus,
+    rx: Receiver<Result<MotionEvents>>,
+    history: MotionHistory,
+}
+
+pub struct MotionHistory {
+    motion: MotionEvents,
+    visitor: MotionEvents,
+    ai: MotionEvents,
 }
 
 impl MotionData {
@@ -33,10 +54,10 @@ impl MotionData {
     /// An error is raised if the motion connection to the camera is dropped
     pub fn motion_detected(&mut self) -> Result<Option<bool>> {
         self.consume_motion_events()?;
-        Ok(match &self.last_update {
-            MotionStatus::Start(_) => Some(true),
-            MotionStatus::Stop(_) => Some(false),
-            MotionStatus::NoChange(_) => None,
+        Ok(match &self.history.motion {
+            MotionEvents::Start(_) => Some(true),
+            MotionEvents::Stop(_) => Some(false),
+            _ => None,
         })
     }
 
@@ -46,44 +67,64 @@ impl MotionData {
     /// An error is raised if the motion connection to the camera is dropped
     pub fn motion_detected_within(&mut self, duration: Duration) -> Result<Option<bool>> {
         self.consume_motion_events()?;
-        Ok(match &self.last_update {
-            MotionStatus::Start(_) => Some(true),
-            MotionStatus::Stop(time) => Some((Instant::now() - *time) < duration),
-            MotionStatus::NoChange(_) => None,
+        Ok(match &self.history.motion {
+            MotionEvents::Start(_) => Some(true),
+            MotionEvents::Stop(time) => Some((Instant::now() - *time) < duration),
+            _ => None,
         })
     }
 
-    /// Consume the motion events diretly
+    /// Consume all the motion events on the queue and update the history
     ///
     /// An error is raised if the motion connection to the camera is dropped
-    pub fn consume_motion_events(&mut self) -> Result<Vec<MotionStatus>> {
-        let mut results: Vec<MotionStatus> = vec![];
-        loop {
-            match self.rx.try_recv() {
-                Ok(motion) => results.push(motion?),
-                Err(TryRecvError::Empty) => break,
-                Err(e) => return Err(Error::from(e)),
+    pub fn consume_motion_events(&mut self) -> Result<()> {
+        while self.try_recv()?.is_some() {
+            // Tight loop....
+            // Should not be many of such messages in the queue though
+        }
+        Ok(())
+    }
+
+    fn update_history(&mut self, latest_event: &MotionEvents) {
+        match latest_event {
+            MotionEvents::Start(_) => {
+                self.history.motion = *latest_event;
             }
+            MotionEvents::Stop(_) => {
+                self.history.motion = *latest_event;
+            }
+            MotionEvents::Vistor(_) => {
+                self.history.visitor = *latest_event;
+            }
+            MotionEvents::Ai(_, _) => {
+                self.history.ai = *latest_event;
+            }
+            MotionEvents::NoChange(_) => {}
         }
-        if let Some(last) = results.last() {
-            self.last_update = *last;
+    }
+
+    /// Try to recv a new motion event on the pipeline
+    pub fn try_recv(&mut self) -> Result<Option<MotionEvents>> {
+        match self.rx.try_recv() {
+            Ok(motion) => {
+                let motion = motion?;
+                self.update_history(&motion);
+                Ok(Some(motion))
+            }
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(e) => Err(Error::from(e)),
         }
-        Ok(results)
     }
 
     /// Await a new motion event
-    ///
-    ///
-    pub async fn next_motion(&mut self) -> Result<MotionStatus> {
-        let motions = self.consume_motion_events()?;
-        if let Some(last) = motions.last() {
-            Ok(*last)
-        } else if let Some(moition) = self.rx.recv().await {
-            let moition = moition?;
-            self.last_update = moition;
-            Ok(moition)
-        } else {
-            Err(Error::Other("Motion dropped"))
+    pub async fn recv(&mut self) -> Result<Option<MotionEvents>> {
+        match self.rx.recv().await {
+            Some(motion) => {
+                let motion = motion?;
+                self.update_history(&motion);
+                Ok(Some(motion))
+            }
+            None => Ok(None),
         }
     }
 
@@ -91,10 +132,10 @@ impl MotionData {
     ///
     /// It must be stopped for at least the given duration
     pub async fn await_stop(&mut self, duration: Duration) -> Result<()> {
-        let motions = self.consume_motion_events()?;
-        let mut last_motion = motions.last().copied();
+        self.consume_motion_events()?;
+        let mut last_motion = self.history.motion;
         loop {
-            if let Some(MotionStatus::Stop(time)) = last_motion {
+            if let MotionEvents::Stop(time) = last_motion {
                 // In stop state
                 if duration.is_zero() || (Instant::now() - time) > duration {
                     return Ok(());
@@ -105,22 +146,37 @@ impl MotionData {
                         _ = tokio::time::sleep(remaining_sleep) => {None},
                         v = async {
                             loop {
-                                match self.next_motion().await {
-                                    n @ Ok(MotionStatus::Start(_)) => {return n;},
+                                match self.recv().await {
+                                    n @ Ok(Some(MotionEvents::Start(_))) => {return n;},
+                                    n @ Ok(None) => {return n;} // End of data
                                     n @ Err(_) => {return n;},
                                     _ => {continue;}
                                 }
                             }
                         } => {Some(v)}
                     };
-                    if let Some(v) = result {
-                        v?;
-                    } else {
-                        return Ok(());
+                    match result {
+                        Some(Ok(None)) => {
+                            // Camera has dropped motion
+                            return Ok(());
+                        }
+                        Some(Ok(Some(_))) => {
+                            // conitnue to next data
+                        }
+                        Some(Err(e)) => return Err(e),
+                        None => {
+                            // Timoout occured motion stopped
+                            return Ok(());
+                        }
                     }
                 }
             }
-            last_motion = Some(self.next_motion().await?);
+            if let Some(next_motion) = self.recv().await? {
+                last_motion = next_motion;
+            } else {
+                // Camera had dropped motion
+                return Ok(());
+            }
         }
     }
 
@@ -128,10 +184,10 @@ impl MotionData {
     ///
     /// The motion must have a minimum duration as given
     pub async fn await_start(&mut self, duration: Duration) -> Result<()> {
-        let motions = self.consume_motion_events()?;
-        let mut last_motion = motions.last().copied();
+        self.consume_motion_events()?;
+        let mut last_motion = self.history.motion;
         loop {
-            if let Some(MotionStatus::Start(time)) = last_motion {
+            if let MotionEvents::Start(time) = last_motion {
                 // In start state
                 if duration.is_zero() || (Instant::now() - time) > duration {
                     return Ok(());
@@ -141,22 +197,37 @@ impl MotionData {
                         _ = tokio::time::sleep(duration - (Instant::now() - time)) => {None},
                         v = async {
                             loop {
-                                match self.next_motion().await {
-                                    n @ Ok(MotionStatus::Stop(_)) => {return n;},
+                                match self.recv().await {
+                                    n @ Ok(Some(MotionEvents::Stop(_))) => {return n;},
+                                    n @ Ok(None) => {return n;} // End of data
                                     n @ Err(_) => {return n;},
                                     _ => {continue;}
                                 }
                             }
                         } => {Some(v)}
                     };
-                    if let Some(v) = result {
-                        v?;
-                    } else {
-                        return Ok(());
+                    match result {
+                        Some(Ok(None)) => {
+                            // Camera has dropped motion
+                            return Ok(());
+                        }
+                        Some(Ok(Some(_))) => {
+                            // conitnue to next data
+                        }
+                        Some(Err(e)) => return Err(e),
+                        None => {
+                            // Timeout occured motion started
+                            return Ok(());
+                        }
                     }
                 }
             }
-            last_motion = Some(self.next_motion().await?);
+            if let Some(next_motion) = self.recv().await? {
+                last_motion = next_motion;
+            } else {
+                // Camera had dropped motion
+                return Ok(());
+            }
         }
     }
 }
@@ -225,7 +296,7 @@ impl BcCamera {
                     loop {
                         tokio::task::yield_now().await;
                         let msg = sub.recv().await;
-                        let status = match msg {
+                        let status_list = match msg {
                             Ok(motion_msg) => {
                                 if let BcBody::ModernMsg(ModernMsg {
                                     payload:
@@ -236,36 +307,51 @@ impl BcCamera {
                                     ..
                                 }) = motion_msg.body
                                 {
-                                    let mut result = MotionStatus::NoChange(Instant::now());
+                                    let mut result = vec![];
                                     for alarm_event in &alarm_event_list.alarm_events {
                                         if alarm_event.channel_id == channel_id {
-                                            if alarm_event.status != "none"
-                                                || alarm_event
-                                                    .ai_type
-                                                    .as_ref()
-                                                    .map(|ai_type| ai_type != "none")
-                                                    .unwrap_or(false)
-                                            {
-                                                result = MotionStatus::Start(Instant::now());
-                                                break;
+                                            if alarm_event.status == "visitor" {
+                                                result.push(MotionEvents::Vistor(Instant::now()));
+                                            } else if alarm_event.status == "MD" {
+                                                result.push(MotionEvents::Start(Instant::now()));
+                                            } else if alarm_event.ai_type != "none" {
+                                                result.push(MotionEvents::Ai(Instant::now(),
+                                                    match alarm_event.ai_type.as_ref() {
+                                                        "person" | "people" | "human" => AiKind::Person,
+                                                        "car" | "vehicle" => AiKind::Car,
+                                                        _ => AiKind::Other,
+                                                    }
+                                                ));
                                             } else {
-                                                result = MotionStatus::Stop(Instant::now());
-                                                break;
+                                                result.push(MotionEvents::Stop(Instant::now()));
                                             }
                                         }
                                     }
                                     Ok(result)
                                 } else {
-                                    Ok(MotionStatus::NoChange(Instant::now()))
+                                    Ok(vec![])
                                 }
                             }
                             // On connection drop we stop
                             Err(e) => Err(e),
                         };
 
-                        if tx.send(status).await.is_err() {
-                            // Motion reciever has been dropped
-                            break;
+                        match status_list {
+                            Ok(mut status_list) => {
+                                for status in status_list.drain(..) {
+                                    if tx.send(Ok(status)).await.is_err() {
+                                        // Motion reciever has been dropped
+                                        break;
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                // Err from camera
+                                if tx.send(Err(e)).await.is_err() {
+                                    // Motion reciever has been dropped
+                                }
+                                break;
+                            }
                         }
                     }
                     Ok(())
@@ -277,7 +363,11 @@ impl BcCamera {
             handle: set,
             cancel,
             rx,
-            last_update: MotionStatus::NoChange(Instant::now()),
+            history: MotionHistory {
+                motion: MotionEvents::NoChange(Instant::now()),
+                visitor: MotionEvents::NoChange(Instant::now()),
+                ai: MotionEvents::NoChange(Instant::now()),
+            },
         })
     }
 }

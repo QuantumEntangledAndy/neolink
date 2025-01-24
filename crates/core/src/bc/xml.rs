@@ -633,16 +633,27 @@ pub struct AlarmEvent {
     /// The channel the event occured on. Usually zero unless from an NVR
     #[serde(rename = "channelId")]
     pub channel_id: u8,
-    /// Motion status. Known values are `"MD"` or `"none"`
+    /// Motion status. Known values are `"MD"` or `"none"` or `"visitor"`
     pub status: String,
     /// AI status. Known values are `"people"` or `"none"`
-    #[serde(rename = "AItype", skip_serializing_if = "Option::is_none")]
-    pub ai_type: Option<String>,
+    #[serde(
+        rename = "AItype",
+        default = "ai_type_default",
+        skip_serializing_if = "ai_type_skip"
+    )]
+    pub ai_type: String,
     /// The recording status. Known values `0` or `1`
     pub recording: i32,
     /// The timestamp associated with the recording. `0` if not recording
     #[serde(rename = "timeStamp")]
     pub timeStamp: i32,
+}
+
+fn ai_type_default() -> String {
+    "none".to_string()
+}
+fn ai_type_skip(value: &String) -> bool {
+    value == "none"
 }
 
 /// The Ptz messages used to move the camera

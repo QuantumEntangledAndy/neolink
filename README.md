@@ -243,6 +243,20 @@ Status Messages:
   pir status
 - `/status/motion` Contains the motion detection alarm status. `on` for motion
   and `off` for still, only published when `enable_moton` is true in the config
+- `/status/visitor` Contains the visitor detection status, which occurs when a
+  doorbell is pressed.
+- `/status/ai` Contains the ai detection status, which occurs when a
+  the camera's internal ai detects something. The value is `person/car/other`
+- `/status/ai/person` Contains the ai detection status of the last person,
+  which occurs when a the camera's internal ai detects a person.
+- `/status/ai/car` Contains the ai detection status of the last car, which
+  occurs when a the camera's internal ai detects a car.
+- `/status/ai/other` Contains the ai detection status from the camera, which
+  occurs when a the camera's internal ai detects something.
+
+  (This is a placeholder until I can fiquire out everything that the camera
+  can detect. If you have list for me please open an issue with it, I don't
+  have a cam with AI to check myself)
 - `/status/ptz/preset` Sent in reply to a `/query/ptz/preset` an XML encoded
   version of the PTZ presets
 - `/status/preview` a base64 encoded camera image updated every 2s. Not
@@ -322,6 +336,14 @@ password = "password"
 uid = "ABCDEF0123456789"
 [cameras.mqtt]
 enable_motion = false        # motion detection
+                             # (limited battery drain since it
+                             # is a passive listening connection)
+                             #
+enable_visitor = false       # visitor press for doorbell camera
+                             # (limited battery drain since it
+                             # is a passive listening connection)
+                             #
+enable_ai = false            # report detected ai by the camera
                              # (limited battery drain since it
                              # is a passive listening connection)
                              #

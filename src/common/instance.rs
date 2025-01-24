@@ -15,10 +15,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::{MdState, NeoCamCommand, NeoCamThreadState, Permit};
+use super::{AiState, MdState, NeoCamCommand, NeoCamThreadState, Permit, UseCounter, VisitorState};
 use crate::{config::CameraConfig, AnyResult, Result};
 use neolink_core::bc_protocol::BcCamera;
-
 #[cfg(feature = "gstreamer")]
 mod gst;
 
@@ -234,6 +233,22 @@ impl NeoInstance {
         let (instance_tx, instance_rx) = oneshot();
         self.camera_control
             .send(NeoCamCommand::Motion(instance_tx))
+            .await?;
+        Ok(instance_rx.await?)
+    }
+
+    pub(crate) async fn visitor(&self) -> Result<WatchReceiver<VisitorState>> {
+        let (instance_tx, instance_rx) = oneshot();
+        self.camera_control
+            .send(NeoCamCommand::Visitor(instance_tx))
+            .await?;
+        Ok(instance_rx.await?)
+    }
+
+    pub(crate) async fn ai(&self) -> Result<WatchReceiver<AiState>> {
+        let (instance_tx, instance_rx) = oneshot();
+        self.camera_control
+            .send(NeoCamCommand::Ai(instance_tx))
             .await?;
         Ok(instance_rx.await?)
     }
