@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022, macos-12, macos-14] # macos-14+ is arm64
+        os: [ubuntu-22.04, windows-2022, macos-13, macos-14] # macos-14+ is arm64
     steps:
       - uses: actions/checkout@v4
         name: Checkout onto ${{ runner.os }}
@@ -366,7 +366,7 @@ jobs:
       - name: Download Macos
         uses: actions/download-artifact@v4
         with:
-          name: release-macos-12
+          name: release-macos-13
           path: neolink_macos_intel
       - name: Download Macos arm64
         uses: actions/download-artifact@v4
