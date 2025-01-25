@@ -487,11 +487,14 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                         let mut vis = camera_visitor.visitor().await?;
                         loop {
                             let v = async {
+                                vis.changed().await.with_context(|| {
+                                    format!("{}: ViaStart Watch Dropped", camera_name)
+                                })?;
                                 vis.wait_for(|state| matches!(state, VisitorState::Visted(_))).await.with_context(|| {
-                                    format!("{}: MdStart Watch Dropped", camera_name)
+                                    format!("{}: ViaStart Watch Dropped", camera_name)
                                 })?;
                                 mqtt_visitor.send_message("status/visitor", "visitor", true).await.with_context(|| {
-                                    format!("{}: Failed to publish motion start", camera_name)
+                                    format!("{}: Failed to publish visitor", camera_name)
                                 })?;
                                 AnyResult::Ok(())
                             }.await;
@@ -509,8 +512,11 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                         loop {
                             let v = async {
                                 let ai_kind = {
+                                    ai.changed().await.with_context(|| {
+                                        format!("{}: AiStart Watch Dropped", camera_name)
+                                    })?;
                                     let ai_state = ai.wait_for(|state| !matches!(state, AiState::Unknown)).await.with_context(|| {
-                                        format!("{}: MdStart Watch Dropped", camera_name)
+                                        format!("{}: AiStart Watch Dropped", camera_name)
                                     })?;
                                     match &*ai_state {
                                         AiState::Person(_) => "person",
@@ -521,10 +527,10 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                                 };
 
                                 mqtt_ai.send_message("status/ai", ai_kind, true).await.with_context(|| {
-                                    format!("{}: Failed to publish motion start", camera_name)
+                                    format!("{}: Failed to publish ai msg", camera_name)
                                 })?;
                                 mqtt_ai.send_message(&format!("status/ai/{}", ai_kind), ai_kind, true).await.with_context(|| {
-                                    format!("{}: Failed to publish motion start", camera_name)
+                                    format!("{}: Failed to publish ai sub msg", camera_name)
                                 })?;
                                 AnyResult::Ok(())
                             }.await;

@@ -161,11 +161,11 @@ impl MotionData {
                             return Ok(());
                         }
                         Some(Ok(Some(_))) => {
-                            // conitnue to next data
+                            // continue to next data
                         }
                         Some(Err(e)) => return Err(e),
                         None => {
-                            // Timoout occured motion stopped
+                            // Timeout occured motion stopped
                             return Ok(());
                         }
                     }
