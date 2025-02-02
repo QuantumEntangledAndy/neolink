@@ -501,6 +501,27 @@ There are currently 2 environmental variables available as part of the container
 - `NEO_LINK_MODE`: defaults to `"rtsp"` if not set, other options are "mqtt" or "mqtt-rtsp".
 - `NEO_LINK_PORT`: defaults to `8554`, set this to your required port value.
 
+#### Compose
+
+This is a quick example on how to use the Dockerfile with the compose system. It is important to note that a docker compose `environment:` tag is runtime enviroment variables, but the aforementioned Dockerfile environment variables must be set at build time. In the example, this mode is set by directly setting the command to the value you want. Change `rtsp` to the neolink mode you wish to run.
+
+To use the following example you should make a compose file in the same directory as your config file named `neolink.toml`. If not, you will need to update the volume tag. To run the container use the command `docker compose up`. To run the container in detatched mode and in the background, instead run `docker compose up -d`.
+
+```yaml
+version: '3.8'
+services:
+  neolink:
+    image: quantumentangledandy/neolink # If a specific version should be targetted, target it here with `:vx.x.x`
+    command: ["/usr/local/bin/neolink", "rtsp", "--config=/etc/neolink.toml"]  # The NEO_LINK_MODE can be set by modifying this command
+    container_name: neolink
+    ports:
+      - 8554:8554
+    volumes:
+      - $PWD/neolink.toml:/etc/neolink.toml
+    restart: unless-stopped
+    #network_mode: host # As above, if the network host is required, uncomment this.
+```
+
 ### Image
 
 You can write an image from the stream to disk using:
