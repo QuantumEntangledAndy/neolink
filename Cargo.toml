@@ -43,7 +43,7 @@ toml = "0.8.2"
 uuid = { version = "1.8.0", features = ["v4"] }
 validator = {version="0.18.1", features = ["derive"] }
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 tikv-jemallocator = "0.5"
 
 [features]
