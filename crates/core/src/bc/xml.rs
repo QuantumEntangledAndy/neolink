@@ -585,7 +585,7 @@ pub struct TalkAbility {
     /// Duplexes known values `"FDX"`
     #[serde(default, rename = "duplexList")]
     pub duplex_list: Vec<DuplexList>,
-    /// audioStreamModes known values `"followVideoStream"`
+    /// audioStreamModes known values `"followVideoStream"` and `"mixAudioStream"`
     #[serde(default, rename = "audioStreamModeList")]
     pub audio_stream_mode_list: Vec<AudioStreamModeList>,
     /// AudioConfigs contans the details of the audio to follow
@@ -605,7 +605,7 @@ pub struct DuplexList {
 pub struct AudioStreamModeList {
     /// The supported audio stream mode
     #[serde(rename = "audioStreamMode")]
-    pub audio_stream_mode: String,
+    pub audio_stream_mode: Vec<String>,
 }
 
 /// audioConfigList xml
