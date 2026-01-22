@@ -30,6 +30,7 @@ struct StreamConfig {
     fps_table: Vec<u32>,
     vid_type: Option<VideoType>,
     aud_type: Option<AudioType>,
+    enable_low_latency: bool,
 }
 impl StreamConfig {
     async fn new(instance: &NeoInstance, name: StreamKind) -> AnyResult<Self> {
@@ -84,6 +85,8 @@ impl StreamConfig {
             })
             .await?;
 
+        let enable_low_latency = instance.config().await?.borrow().enable_low_latency;
+
         Ok(StreamConfig {
             resolution,
             bitrate,
@@ -92,6 +95,7 @@ impl StreamConfig {
             bitrate_table,
             vid_type: None,
             aud_type: None,
+            enable_low_latency,
         })
     }
 
@@ -209,17 +213,21 @@ pub(super) async fn make_factory(
                         }?;
 
                         // Build the right audio pipeline
-                        let aud_src = match stream_config.aud_type.as_ref() {
-                            Some(AudioType::Aac) => {
-                                let src = build_aac(&element, &stream_config)?;
-                                AnyResult::Ok(Some(src))
-                            }
-                            Some(AudioType::Adpcm(block_size)) => {
-                                let src = build_adpcm(&element, *block_size, &stream_config)?;
-                                AnyResult::Ok(Some(src))
-                            }
-                            None => AnyResult::Ok(None),
-                        }?;
+                        let aud_src = if config.enable_audio {
+                            match stream_config.aud_type.as_ref() {
+                                Some(AudioType::Aac) => {
+                                    let src = build_aac(&element, &stream_config)?;
+                                    AnyResult::Ok(Some(src))
+                                }
+                                Some(AudioType::Adpcm(block_size)) => {
+                                    let src = build_adpcm(&element, *block_size, &stream_config)?;
+                                    AnyResult::Ok(Some(src))
+                                }
+                                None => AnyResult::Ok(None),
+                            }?
+                        } else {
+                            None
+                        };
 
                         if let Some(app) = vid_src.as_ref() {
                             app.set_callbacks(
@@ -522,7 +530,9 @@ fn pipe_h264(bin: &Element, stream_config: &StreamConfig) -> Result<Linked> {
 
     source.set_is_live(false);
     source.set_block(false);
-    source.set_min_latency(1000 / (stream_config.fps as i64));
+    if stream_config.enable_low_latency {
+        source.set_min_latency(1000 / (stream_config.fps as i64));
+    }
     source.set_property("emit-signals", false);
     source.set_max_bytes(buffer_size as u64);
     source.set_do_timestamp(false);
@@ -573,7 +583,9 @@ fn pipe_h265(bin: &Element, stream_config: &StreamConfig) -> Result<Linked> {
         .map_err(|_| anyhow!("Cannot cast to appsrc."))?;
     source.set_is_live(false);
     source.set_block(false);
-    source.set_min_latency(1000 / (stream_config.fps as i64));
+    if stream_config.enable_low_latency {
+        source.set_min_latency(1000 / (stream_config.fps as i64));
+    }
     source.set_property("emit-signals", false);
     source.set_max_bytes(buffer_size as u64);
     source.set_do_timestamp(false);
@@ -626,7 +638,9 @@ fn pipe_aac(bin: &Element, stream_config: &StreamConfig) -> Result<Linked> {
 
     source.set_is_live(false);
     source.set_block(false);
-    source.set_min_latency(1000 / (stream_config.fps as i64));
+    if stream_config.enable_low_latency {
+        source.set_min_latency(1000 / (stream_config.fps as i64));
+    }
     source.set_property("emit-signals", false);
     source.set_max_bytes(buffer_size as u64);
     source.set_do_timestamp(false);
@@ -712,7 +726,9 @@ fn pipe_adpcm(bin: &Element, block_size: u32, stream_config: &StreamConfig) -> R
         .map_err(|_| anyhow!("Cannot cast to appsrc."))?;
     source.set_is_live(false);
     source.set_block(false);
-    source.set_min_latency(1000 / (stream_config.fps as i64));
+    if stream_config.enable_low_latency {
+        source.set_min_latency(1000 / (stream_config.fps as i64));
+    }
     source.set_property("emit-signals", false);
     source.set_max_bytes(buffer_size as u64);
     source.set_do_timestamp(false);
@@ -784,7 +800,9 @@ fn pipe_silence(bin: &Element, stream_config: &StreamConfig) -> Result<Linked> {
 
     source.set_is_live(false);
     source.set_block(false);
-    source.set_min_latency(1000 / (stream_config.fps as i64));
+    if stream_config.enable_low_latency {
+        source.set_min_latency(1000 / (stream_config.fps as i64));
+    }
     source.set_property("emit-signals", false);
     source.set_max_bytes(buffer_size as u64);
     source.set_do_timestamp(false);
