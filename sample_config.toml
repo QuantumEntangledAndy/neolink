@@ -41,6 +41,10 @@ name = "driveway"
 username = "admin"
 password = "12345678"
 address = "192.168.1.187:9000"
+
+# enable_audio = true
+# enable_low_latency = true
+
 # MQTT Discovery: https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery
 # mqtt.discovery.topic = "homeassistant" # Uncomment to enable
 # If using discovery, _ characters are replaced with spaces in the name and title case is applied
@@ -90,6 +94,11 @@ name = "storage shed"
 username = "admin"
 password = "987654321"
 address = "192.168.1.245:9000"
+
+# Performance optimizations: reduce CPU overhead
+# enable_audio = true
+# enable_low_latency = true
+
 # If you use a battery camera: **Instead** of an `address` supply the uid
 # as follows
 # uid = "ABCD01234567890EFG"
