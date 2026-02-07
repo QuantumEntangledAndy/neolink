@@ -16,6 +16,7 @@
 -- You should have received a copy of the GNU General Public License along with
 -- this program. If not, see <https://www.gnu.org/licenses/>.
 
+local bit32 = bit -- replace deprecated bit32 library with Wireshark's Lua BitOp library
 local bc_protocol = Proto("Baichuan",  "Baichuan/Reolink IP Camera Protocol")
 
 local magic_bytes = ProtoField.int32("baichuan.magic", "magic", base.DEC)
@@ -453,7 +454,7 @@ local function udp_decrypt(data, tid)
     for b=0, 3 do
       local byte_index = x * 4 + b
       local val = data:get_index(byte_index)
-      local key_byte = bit32.extract(xor_key_word, b*8, 8)
+      local key_byte = bit32.band(bit32.rshift(xor_key_word, b*8), 0xff)
       val = bit32.bxor(key_byte, val)
       result:set_index(byte_index, val)
       if byte_index >= data:len() - 1 then
