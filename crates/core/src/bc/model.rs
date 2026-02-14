@@ -40,6 +40,10 @@ pub const MSG_ID_GET_SERVICE_PORTS: u32 = 37;
 pub const MSG_ID_GET_EMAIL: u32 = 42;
 /// Set email settings
 pub const MSG_ID_SET_EMAIL: u32 = 43;
+/// Get compression config
+pub const MSG_ID_GET_COMPRESSION: u32 = 56;
+/// Set compression config
+pub const MSG_ID_SET_COMPRESSION: u32 = 57;
 /// Get users and general system info
 pub const MSG_ID_GET_ABILITY_SUPPORT: u32 = 58;
 /// Update, create and remove users

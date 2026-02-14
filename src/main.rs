@@ -40,6 +40,7 @@ mod battery;
 mod cmdline;
 mod common;
 mod config;
+mod encoding;
 #[cfg(feature = "gstreamer")]
 mod image;
 mod mqtt;
@@ -146,6 +147,9 @@ async fn main() -> Result<()> {
         }
         Some(Command::Users(opts)) => {
             users::main(opts, neo_reactor.clone()).await?;
+        }
+        Some(Command::Encoding(opts)) => {
+            encoding::main(opts, neo_reactor.clone()).await?;
         }
     }
 

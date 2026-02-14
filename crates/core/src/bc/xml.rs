@@ -141,6 +141,9 @@ pub struct BcXml {
     /// Read and write users
     #[serde(rename = "UserList", skip_serializing_if = "Option::is_none")]
     pub user_list: Option<UserList>,
+    /// Compression/encoding settings
+    #[serde(rename = "Compression", skip_serializing_if = "Option::is_none")]
+    pub compression: Option<Compression>,
 }
 
 impl BcXml {
@@ -421,6 +424,64 @@ pub struct LedState {
     /// State of the LED status light (blue on light), values are "open", "close"
     #[serde(rename = "lightState")]
     pub light_state: String,
+}
+
+/// GOP (group of pictures) settings
+#[allow(missing_docs)]
+#[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize, Clone)]
+pub struct GopSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cur: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<u32>,
+}
+
+/// Per-stream compression/encoding settings
+#[allow(missing_docs)]
+#[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize, Clone)]
+pub struct StreamCompression {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<u32>,
+    #[serde(rename = "resolutionName", skip_serializing_if = "Option::is_none")]
+    pub resolution_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Rate control mode (e.g. "cbr", "vbr")
+    #[serde(rename = "encoderType", skip_serializing_if = "Option::is_none")]
+    pub encoder_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<u32>,
+    /// Bitrate in kbps
+    #[serde(rename = "bitRate", skip_serializing_if = "Option::is_none")]
+    pub bit_rate: Option<u32>,
+    #[serde(rename = "encoderProfile", skip_serializing_if = "Option::is_none")]
+    pub encoder_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gop: Option<GopSettings>,
+    #[serde(rename = "videoEncType", skip_serializing_if = "Option::is_none")]
+    pub video_enc_type: Option<String>,
+}
+
+/// Compression/encoding settings (MSG 56/57)
+#[allow(missing_docs)]
+#[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize, Clone)]
+pub struct Compression {
+    #[serde(rename = "@version")]
+    pub version: String,
+    #[serde(rename = "channelId")]
+    pub channel_id: u8,
+    #[serde(rename = "isNoTranslateFrame", skip_serializing_if = "Option::is_none")]
+    pub is_no_translate_frame: Option<u32>,
+    #[serde(rename = "mainStream", skip_serializing_if = "Option::is_none")]
+    pub main_stream: Option<StreamCompression>,
+    #[serde(rename = "subStream", skip_serializing_if = "Option::is_none")]
+    pub sub_stream: Option<StreamCompression>,
+    #[serde(rename = "thirdStream", skip_serializing_if = "Option::is_none")]
+    pub third_stream: Option<StreamCompression>,
 }
 
 /// FloodlightStatus xml
