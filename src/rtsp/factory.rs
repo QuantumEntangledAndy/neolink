@@ -243,8 +243,8 @@ pub(super) async fn make_factory(
                         // Run blocking code on a seperate thread
                         // This is not an async thread
                         std::thread::spawn(move || {
-                            let mut aud_ts = 0u32;
-                            let mut vid_ts = 0u32;
+                            let mut aud_ts: u64 = 0;
+                            let mut vid_ts: u64 = 0;
                             let mut pools = Default::default();
 
                             log::trace!("{name}::{stream}: Sending buffered frames");
@@ -304,8 +304,8 @@ fn send_to_sources(
     pools: &mut HashMap<usize, gstreamer::BufferPool>,
     vid_src: &Option<AppSrc>,
     aud_src: &Option<AppSrc>,
-    vid_ts: &mut u32,
-    aud_ts: &mut u32,
+    vid_ts: &mut u64,
+    aud_ts: &mut u64,
     stream_config: &StreamConfig,
 ) -> AnyResult<()> {
     // Update TS
@@ -313,39 +313,39 @@ fn send_to_sources(
         BcMedia::Aac(aac) => {
             let duration = aac.duration().expect("Could not calculate AAC duration");
             if let Some(aud_src) = aud_src.as_ref() {
-                log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts as u64));
+                log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts));
                 send_to_appsrc(
                     aud_src,
                     aac.data,
-                    Duration::from_micros(*aud_ts as u64),
+                    Duration::from_micros(*aud_ts),
                     pools,
                 )?;
             }
-            *aud_ts += duration;
+            *aud_ts += duration as u64;
         }
         BcMedia::Adpcm(adpcm) => {
             let duration = adpcm
                 .duration()
                 .expect("Could not calculate ADPCM duration");
             if let Some(aud_src) = aud_src.as_ref() {
-                log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts as u64));
+                log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts));
                 send_to_appsrc(
                     aud_src,
                     adpcm.data,
-                    Duration::from_micros(*aud_ts as u64),
+                    Duration::from_micros(*aud_ts),
                     pools,
                 )?;
             }
-            *aud_ts += duration;
+            *aud_ts += duration as u64;
         }
         BcMedia::Iframe(BcMediaIframe { data, .. })
         | BcMedia::Pframe(BcMediaPframe { data, .. }) => {
             if let Some(vid_src) = vid_src.as_ref() {
-                log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts as u64));
-                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts as u64), pools)?;
+                log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts));
+                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts), pools)?;
             }
-            const MICROSECONDS: u32 = 1000000;
-            *vid_ts += MICROSECONDS / stream_config.fps;
+            const MICROSECONDS: u64 = 1000000;
+            *vid_ts += MICROSECONDS / stream_config.fps as u64;
         }
         _ => {}
     }
