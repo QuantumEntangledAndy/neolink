@@ -313,13 +313,20 @@ fn send_to_sources(
         BcMedia::Aac(aac) => {
             let duration = aac.duration().expect("Could not calculate AAC duration");
             if let Some(aud_src) = aud_src.as_ref() {
-                log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    aac.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                // Drop audio frames when buffer is nearly full to prevent
+                // cascading backpressure that can stall the video pipeline
+                let max = aud_src.max_bytes();
+                if max > 0 && aud_src.current_level_bytes() >= max * 9 / 10 {
+                    log::debug!("Audio buffer near capacity, dropping AAC frame");
+                } else {
+                    log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts as u64));
+                    send_to_appsrc(
+                        aud_src,
+                        aac.data,
+                        Duration::from_micros(*aud_ts as u64),
+                        pools,
+                    )?;
+                }
             }
             *aud_ts += duration;
         }
@@ -328,13 +335,18 @@ fn send_to_sources(
                 .duration()
                 .expect("Could not calculate ADPCM duration");
             if let Some(aud_src) = aud_src.as_ref() {
-                log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    adpcm.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                let max = aud_src.max_bytes();
+                if max > 0 && aud_src.current_level_bytes() >= max * 9 / 10 {
+                    log::debug!("Audio buffer near capacity, dropping ADPCM frame");
+                } else {
+                    log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts as u64));
+                    send_to_appsrc(
+                        aud_src,
+                        adpcm.data,
+                        Duration::from_micros(*aud_ts as u64),
+                        pools,
+                    )?;
+                }
             }
             *aud_ts += duration;
         }
