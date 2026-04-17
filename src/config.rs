@@ -218,6 +218,18 @@ pub(crate) struct CameraConfig {
 
     #[serde(default = "default_false", alias = "idle", alias = "idle_disc")]
     pub(crate) idle_disconnect: bool,
+
+    /// Mark this camera as battery-powered.
+    ///
+    /// When true, neolink will:
+    /// - Auto-enable `idle_disconnect` behavior
+    /// - Use true exponential backoff on reconnection (doubling up to 1 hour)
+    ///   instead of the default 5-second cap, to avoid draining the battery
+    ///   with constant reconnection attempts
+    /// - Disable the periodic stream-info poll that would otherwise wake the
+    ///   camera every 15 seconds; stream capabilities are queried once instead
+    #[serde(default = "default_false", alias = "battery")]
+    pub(crate) battery_camera: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Validate, Clone, PartialEq, Eq, Hash)]

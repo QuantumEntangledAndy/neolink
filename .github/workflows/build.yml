@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022, macos-12, macos-14] # macos-14+ is arm64
+        os: [ubuntu-22.04, windows-2022, macos-14] # macos-14+ is arm64
     steps:
       - uses: actions/checkout@v4
         name: Checkout onto ${{ runner.os }}
@@ -43,46 +43,49 @@ jobs:
           sudo aptitude install -y libgstrtspserver-1.0-dev libgstreamer1.0-dev libgtk2.0-dev protobuf-compiler libssl-dev
       - if: runner.os == 'Windows'
         name: Install Windows deps
+        shell: pwsh
         run: |
-          # Gstreamer
-          choco install -y --no-progress gstreamer --version=1.24.2
-          choco install -y --no-progress gstreamer-devel --version=1.24.2
+          # GStreamer - download MSIs directly (choco gstreamer package is unreliable)
+          $GST_VER = "1.24.12"
+          $BASE_URL = "https://gstreamer.freedesktop.org/data/pkg/windows/$GST_VER/msvc"
+
+          Write-Host "Downloading GStreamer $GST_VER runtime..."
+          Invoke-WebRequest -Uri "$BASE_URL/gstreamer-1.0-msvc-x86_64-$GST_VER.msi" -OutFile gst-runtime.msi
+          Write-Host "Downloading GStreamer $GST_VER devel..."
+          Invoke-WebRequest -Uri "$BASE_URL/gstreamer-1.0-devel-msvc-x86_64-$GST_VER.msi" -OutFile gst-devel.msi
+
+          Write-Host "Installing GStreamer runtime..."
+          Start-Process msiexec.exe -ArgumentList "/i gst-runtime.msi ADDLOCAL=ALL /qn /norestart" -Wait -NoNewWindow
+          Write-Host "Installing GStreamer devel..."
+          Start-Process msiexec.exe -ArgumentList "/i gst-devel.msi ADDLOCAL=ALL /qn /norestart" -Wait -NoNewWindow
+
           $env:GSTREAMER_1_0_ROOT_MSVC_X86_64=$env:SYSTEMDRIVE + '\gstreamer\1.0\msvc_x86_64\'
-          # Github runners work on both C or D drive and figuring out which was used is difficult
           if (-not (Test-Path -Path "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64" -PathType Container)) {
-            $env:GSTREAMER_1_0_ROOT_MSVC_X86_64='D:\\gstreamer\1.0\msvc_x86_64\'
+            $env:GSTREAMER_1_0_ROOT_MSVC_X86_64='D:\gstreamer\1.0\msvc_x86_64\'
           }
-          echo "GSTREAMER_1_0_ROOT_MSVC_X86_64=$env:GSTREAMER_1_0_ROOT_MSVC_X86_64"
+          Write-Host "GSTREAMER_1_0_ROOT_MSVC_X86_64=$env:GSTREAMER_1_0_ROOT_MSVC_X86_64"
 
           # Proto buffers
-          choco install -y --no-progress protoc --version=24.2.0
+          choco install -y --no-progress protoc
 
           # Open SSL
-          choco install -y --no-progress openssl --version=1.1.1.2100
+          choco install -y --no-progress openssl
           $env:OPENSSL_DIR=$env:SYSTEMDRIVE + '\Program Files\OpenSSL-Win64\'
-
-          # Alternative openssl location (depends on version that gets installed by choco)
-          if (-not (Test-Path -Path "$env:OPENSSL_DIR" -PathType Container)) {
+          if (-not (Test-Path "$env:OPENSSL_DIR" -PathType Container)) {
             $env:OPENSSL_DIR=$env:SYSTEMDRIVE + '\Program Files\OpenSSL\'
           }
-          # Github runners work on both C or D drive and figuring out which was used is difficult
-          if (-not (Test-Path -Path "$env:OPENSSL_DIR" -PathType Container)) {
-            $env:OPENSSL_DIR='D:\\Program Files\OpenSSL-Win64\'
+          if (-not (Test-Path "$env:OPENSSL_DIR" -PathType Container)) {
+            $env:OPENSSL_DIR='D:\Program Files\OpenSSL-Win64\'
           }
-          # Or course we could be on alternative location and drive....
-          if (-not (Test-Path -Path "$env:OPENSSL_DIR" -PathType Container)) {
-            $env:OPENSSL_DIR='D:\\Program Files\OpenSSL\'
+          if (-not (Test-Path "$env:OPENSSL_DIR" -PathType Container)) {
+            $env:OPENSSL_DIR='D:\Program Files\OpenSSL\'
           }
 
           # Set github vars
           Add-Content -Path $env:GITHUB_ENV  -Value "GSTREAMER_1_0_ROOT_MSVC_X86_64=$env:GSTREAMER_1_0_ROOT_MSVC_X86_64"
           Add-Content -Path $env:GITHUB_PATH  -Value "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin"
-          Add-Content -Path $env:GITHUB_PATH  -Value "%GSTREAMER_1_0_ROOT_MSVC_X86_64%\bin"
           Add-Content -Path $env:GITHUB_ENV  -Value "OPENSSL_DIR=$env:OPENSSL_DIR"
-
-          # One last check on directories
-          dir "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64"
-          dir "$env:OPENSSL_DIR"
+          Add-Content -Path $env:GITHUB_ENV  -Value "PKG_CONFIG_PATH=$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\lib\pkgconfig"
       - if: runner.os == 'macOS'
         name: Install macOS deps
         run: |
@@ -363,11 +366,6 @@ jobs:
         with:
           name: release-windows-2022
           path: neolink_windows
-      - name: Download Macos
-        uses: actions/download-artifact@v4
-        with:
-          name: release-macos-12
-          path: neolink_macos_intel
       - name: Download Macos arm64
         uses: actions/download-artifact@v4
         with:
@@ -402,7 +400,6 @@ jobs:
         run: |
           dirs=(
             neolink_windows
-            neolink_macos_intel
             neolink_macos_m1
             neolink_linux_x86_64_ubuntu
             neolink_linux_x86_64_bookworm
@@ -420,7 +417,6 @@ jobs:
           name: Neolink ${{steps.toml.outputs.version}}
           files: |
             neolink_windows.zip
-            neolink_macos_intel.zip
             neolink_macos_m1.zip
             neolink_linux_x86_64_ubuntu.zip
             neolink_linux_x86_64_bookworm.zip

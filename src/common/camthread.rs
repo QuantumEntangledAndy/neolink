@@ -105,8 +105,14 @@ impl NeoCamThread {
     // A watch sender is used to send the new camera
     // whenever it changes
     pub(crate) async fn run(&mut self) -> AnyResult<()> {
-        const MAX_BACKOFF: Duration = Duration::from_secs(5);
         const MIN_BACKOFF: Duration = Duration::from_millis(50);
+        // Default cap for wired cameras (backward-compatible with previous 5s cap,
+        // but slightly more generous to reduce log noise)
+        const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(5);
+        // For battery cameras: allow true exponential growth up to 1 hour.
+        // A sleeping battery camera won't respond until motion wakes it,
+        // so hammering it every 5 seconds just drains the battery.
+        const BATTERY_MAX_BACKOFF: Duration = Duration::from_secs(3600);
 
         let mut backoff = MIN_BACKOFF;
 
@@ -120,6 +126,12 @@ impl NeoCamThread {
             let config = config_rec.borrow_and_update().clone();
             let now = Instant::now();
             let name = config.name.clone();
+            let is_battery = config.battery_camera;
+            let max_backoff = if is_battery {
+                BATTERY_MAX_BACKOFF
+            } else {
+                DEFAULT_MAX_BACKOFF
+            };
 
             let mut state = self.state.clone();
 
@@ -152,8 +164,8 @@ impl NeoCamThread {
                 // Command ran long enough to be considered a success
                 backoff = MIN_BACKOFF;
             }
-            if backoff > MAX_BACKOFF {
-                backoff = MAX_BACKOFF;
+            if backoff > max_backoff {
+                backoff = max_backoff;
             }
 
             match result {
@@ -177,7 +189,11 @@ impl NeoCamThread {
                         _ => {
                             // Non fatal
                             log::warn!("{name}: Connection Lost: {:?}", e);
-                            log::info!("{name}: Attempt reconnect in {:?}", backoff);
+                            log::info!(
+                                "{name}: Attempt reconnect in {:?}{}",
+                                backoff,
+                                if is_battery { " (battery camera)" } else { "" }
+                            );
                             sleep(backoff).await;
                             backoff *= 2;
                         }

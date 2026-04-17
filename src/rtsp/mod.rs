@@ -256,10 +256,43 @@ async fn camera_main(camera: NeoInstance, rtsp: &NeoRtspServer) -> Result<()> {
     let later_camera = camera.clone();
     let (supported_streams_tx, supported_streams) = watch(HashSet::<StreamKind>::new());
 
+    // Check if this is a battery camera so we can adjust polling behavior
+    let camera_config = camera.config().await?.clone();
+    let is_battery = camera_config.borrow().battery_camera;
+
     let mut set = JoinSet::new();
     set.spawn(async move {
-        let mut i = IntervalStream::new(interval(Duration::from_secs(15)));
-        while i.next().await.is_some() {
+        // Battery cameras: query stream info once at startup, then stop.
+        // The 15-second poll wakes the camera via the relay every time,
+        // draining the battery rapidly. Stream capabilities don't change
+        // at runtime, so a single query is sufficient.
+        //
+        // Wired cameras: poll every 15 seconds (original behavior).
+        let poll_interval = if is_battery {
+            None // No repeated polling
+        } else {
+            Some(Duration::from_secs(15))
+        };
+
+        // Always do at least one query
+        let mut first = true;
+        let mut ticker = poll_interval.map(|d| IntervalStream::new(interval(d)));
+
+        loop {
+            if first {
+                first = false;
+            } else if let Some(ref mut t) = ticker {
+                if t.next().await.is_none() {
+                    break;
+                }
+            } else {
+                // Battery camera: we already did the one-time query, just
+                // keep this task alive (it holds the supported_streams_tx)
+                // so the stream setup code can read it.
+                futures::future::pending::<()>().await;
+                break;
+            }
+
             let stream_info = later_camera
                 .run_passive_task(|cam| Box::pin(async move { Ok(cam.get_stream_info().await?) }))
                 .await?;
@@ -286,6 +319,10 @@ async fn camera_main(camera: NeoInstance, rtsp: &NeoRtspServer) -> Result<()> {
                     false
                 }
             });
+
+            if is_battery {
+                log::info!("Battery camera: stream info acquired, disabling periodic poll");
+            }
         }
         AnyResult::Ok(())
     });

@@ -56,6 +56,20 @@ impl NeoCam {
         config: CameraConfig,
         #[cfg(feature = "pushnoti")] pn_request_tx: MpscSender<PnRequest>,
     ) -> Result<NeoCam> {
+        // Battery cameras implicitly enable idle_disconnect to prevent
+        // keeping the camera awake when no RTSP client is connected.
+        let config = if config.battery_camera && !config.idle_disconnect {
+            log::info!(
+                "{}: Battery camera detected, auto-enabling idle_disconnect",
+                config.name
+            );
+            let mut c = config;
+            c.idle_disconnect = true;
+            c
+        } else {
+            config
+        };
+
         let (commander_tx, commander_rx) = mpsc(100);
         let (watch_config_tx, watch_config_rx) = watch(config.clone());
         let (camera_watch_tx, camera_watch_rx) = watch(Weak::new());
