@@ -694,7 +694,10 @@ pub struct Preset {
     /// The preset name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Command: Known values: `"toPos"` and `"setPos"`
+    /// Command: Known values: `"toPos"` and `"setPos"`.
+    /// Optional because the camera omits this field when replying to a preset-list query
+    /// (response XML only has id/name/imageName). Fixes upstream issue #326.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub command: String,
 }
 
