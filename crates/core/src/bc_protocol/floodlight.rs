@@ -91,7 +91,7 @@ impl BcCamera {
                 Ok(())
             } else {
                 Err(Error::UnintelligibleReply {
-                    reply: std::sync::Arc::new(Box::new(msg)),
+                    _reply: std::sync::Arc::new(Box::new(msg)),
                     why: "The camera did not accept the Floodlight manual state",
                 })
             }
@@ -147,7 +147,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Expected FloodlightTask xml but it was not recieved",
             })
         }

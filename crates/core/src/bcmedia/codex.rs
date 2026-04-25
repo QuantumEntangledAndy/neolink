@@ -2,12 +2,14 @@
 //!
 //! BcMediaCodex is used with a `[tokio_util::codec::Framed]` to form complete packets
 //!
+use crate::bcmedia::de::find_next_bcmedia_magic;
 use crate::bcmedia::model::*;
 use crate::{Error, Result};
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use log::*;
 use tokio_util::codec::{Decoder, Encoder};
 
+/// Codec for BcMedia framed stream (livestream and replay). Use `new(false)` for replay when the stream may have leading junk (e.g. 32-byte header).
 pub struct BcMediaCodex {
     /// If true we will not search for the start of the next packet
     /// in the event that the stream appears to be corrupted
@@ -16,7 +18,8 @@ pub struct BcMediaCodex {
 }
 
 impl BcMediaCodex {
-    pub(crate) fn new(strict: bool) -> Self {
+    /// Create a new BcMedia codec. Use strict=false for replay/streams that may have leading junk.
+    pub fn new(strict: bool) -> Self {
         Self {
             strict,
             amount_skipped: 0,
@@ -68,16 +71,20 @@ impl Decoder for BcMediaCodex {
                 Err(e) => {
                     if self.strict {
                         return Err(e);
-                    } else if src.is_empty() {
+                    } else if src.len() < 4 {
                         return Ok(None);
                     } else {
                         if self.amount_skipped == 0 {
-                            debug!("Error in stream attempting to restore");
-                            trace!("   Stream Error: {:?}", e);
+                            trace!("Error in stream attempting to restore: {:?}", e);
                         }
-                        // Drop the whole packet and wait for a packet that starts with magic
-                        self.amount_skipped += src.len();
-                        src.clear();
+                        // Prefer resync to next 8-byte-aligned BcMedia magic when found; else advance 1 byte
+                        // so we don't skip past the next real frame (advancing 8 when no magic discarded most of the stream).
+                        let skip = find_next_bcmedia_magic(src)
+                            .unwrap_or(1)
+                            .min(src.len())
+                            .max(1);
+                        self.amount_skipped += skip;
+                        src.advance(skip);
                         continue;
                     }
                 }

@@ -90,7 +90,7 @@ impl BcCamera {
                 }
                 _ => {
                     return Err(Error::UnintelligibleReply {
-                        reply: std::sync::Arc::new(Box::new(legacy_reply)),
+                        _reply: std::sync::Arc::new(Box::new(legacy_reply)),
                         why: "Expected an Encryption message back",
                     })
                 }
@@ -133,6 +133,11 @@ impl BcCamera {
             sub_login.send(modern_login).await?;
             let modern_reply = sub_login.recv().await?;
             if modern_reply.meta.response_code != 200 {
+                log::warn!(
+                    "Camera login rejected: response_code={} (expected 200). \
+                     Check username/password and try max_encryption = \"BcEncrypt\" in config.",
+                    modern_reply.meta.response_code
+                );
                 return Err(Error::CameraLoginFail);
             }
 
@@ -155,7 +160,7 @@ impl BcCamera {
                 }) => return Err(Error::AuthFailed),
                 _ => {
                     return Err(Error::UnintelligibleReply {
-                        reply: std::sync::Arc::new(Box::new(legacy_reply)),
+                        _reply: std::sync::Arc::new(Box::new(legacy_reply)),
                         why: "Expected a DeviceInfo message back from login",
                     })
                 }

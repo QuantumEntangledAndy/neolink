@@ -47,7 +47,7 @@ impl BcCamera {
                 Ok(())
             } else {
                 Err(Error::UnintelligibleReply {
-                    reply: std::sync::Arc::new(Box::new(msg)),
+                    _reply: std::sync::Arc::new(Box::new(msg)),
                     why: "The camera did not except the BcXmp with service data",
                 })
             }
@@ -113,7 +113,7 @@ impl BcCamera {
                     return Ok(xml);
                 } else {
                     return Err(Error::UnintelligibleReply {
-                        reply: std::sync::Arc::new(Box::new(msg)),
+                        _reply: std::sync::Arc::new(Box::new(msg)),
                         why: "Expected ModernMsg payload but it was not recieved",
                     });
                 }
@@ -132,7 +132,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected ServerPort xml but it was not recieved",
             })
         }
@@ -165,7 +165,7 @@ impl BcCamera {
             .await
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected ServerPort xml but it was not recieved",
             })
         }
@@ -182,7 +182,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected HttpPort xml but it was not recieved",
             })
         }
@@ -215,7 +215,7 @@ impl BcCamera {
             .await
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected HttpPort xml but it was not recieved",
             })
         }
@@ -232,7 +232,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected HttpsPort xml but it was not recieved",
             })
         }
@@ -265,7 +265,7 @@ impl BcCamera {
             .await
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected HttpsPort xml but it was not recieved",
             })
         }
@@ -282,7 +282,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected RtspPort xml but it was not recieved",
             })
         }
@@ -315,7 +315,7 @@ impl BcCamera {
             .await
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected RtspPort xml but it was not recieved",
             })
         }
@@ -332,7 +332,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected RtmpPort xml but it was not recieved",
             })
         }
@@ -365,7 +365,7 @@ impl BcCamera {
             .await
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected RtmpPort xml but it was not recieved",
             })
         }
@@ -382,7 +382,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected OnvifPort xml but it was not recieved",
             })
         }
@@ -415,7 +415,7 @@ impl BcCamera {
             .await
         } else {
             Err(Error::UnintelligibleXml {
-                reply: std::sync::Arc::new(Box::new(bcxml)),
+                _reply: std::sync::Arc::new(Box::new(bcxml)),
                 why: "Expected OnvifPort xml but it was not recieved",
             })
         }

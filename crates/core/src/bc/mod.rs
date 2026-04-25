@@ -42,3 +42,4 @@ pub mod xml;
 pub mod crypto;
 
 pub(crate) mod codex;
+pub(crate) mod e1;

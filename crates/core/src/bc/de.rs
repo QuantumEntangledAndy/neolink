@@ -34,8 +34,25 @@ impl<'a> Parser<&'a [u8], Bc, nom::error::VerboseError<&'a [u8]>> for BcParser<'
     }
 }
 
+/// E1/v2 cameras always send 24-byte headers (20-byte standard + 4-byte payload_offset) for
+/// replay binary (MSG 5/8), even when the class field doesn't match the values that trigger
+/// `has_payload_offset`. The SDK determines header size from protocol version (device-level),
+/// not from class (per-packet). When payload_offset is missing from bc_header, read the 4 bytes
+/// here and set it — this gives bc_modern_msg the correct ext_len to separate Extension XML
+/// from binary payload, enabling encryptPos/encryptLen extraction.
 fn bc_msg<'a>(context: &BcContext, buf: &'a [u8]) -> IResult<&'a [u8], Bc> {
     let (buf, header) = bc_header(buf)?;
+    let (buf, header) = if (header.msg_id == MSG_ID_REPLAY_START
+        || header.msg_id == MSG_ID_REPLAY_START_ALT)
+        && header.payload_offset.is_none()
+    {
+        let (buf, ext_len) = le_u32(buf)?;
+        let mut header = header;
+        header.payload_offset = Some(ext_len);
+        (buf, header)
+    } else {
+        (buf, header)
+    };
     let (buf, body) = bc_body(context, &header, buf)?;
 
     let bc = Bc {
@@ -107,7 +124,9 @@ fn bc_modern_msg<'a>(
     };
 
     let mut in_binary = false;
-    let mut encrypted_len = None;
+    // E1/replay: when set with encrypt_region_len, only this region of the payload is decrypted (Ghidra: netc_query_param_t encryptPos/encryptLen).
+    let mut encrypt_region_start: Option<u32> = None;
+    let mut encrypt_region_len: Option<u32> = None;
     // Now we'll take the buffer that Nom gave a ref to and parse it.
     let extension = if ext_len > 0 {
         if context.debug {
@@ -128,13 +147,25 @@ fn bc_modern_msg<'a>(
         })?;
         if let Extension {
             binary_data: Some(1),
+            encrypt_pos,
             encrypt_len,
             ..
         } = parsed
         {
             // In binary so tell the current context that we need to treat the payload as binary
             in_binary = true;
-            encrypted_len = encrypt_len;
+            // So continuation packets (same msg_num, no Extension) are also treated as binary and decrypted
+            context.binary_on_shared(header.msg_num);
+            encrypt_region_start = encrypt_pos;
+            encrypt_region_len = encrypt_len;
+            log::debug!(
+                "E1 Extension: msg_id={} msg_num={} ext_len={} encryptPos={:?} encryptLen={:?}",
+                header.msg_id,
+                header.msg_num,
+                ext_len,
+                encrypt_pos,
+                encrypt_len
+            );
         }
         Some(parsed)
     } else {
@@ -147,6 +178,13 @@ fn bc_modern_msg<'a>(
     // As binary
     let payload;
     if payload_len > 0 {
+        // E1 replay: camera may send extension+media in one payload with no separate extension block (ext_len=0).
+        // Treat as binary so two-stage decrypt (extension then media, IV reset) is attempted.
+        if ext_len == 0
+            && (header.msg_id == MSG_ID_REPLAY_START || header.msg_id == MSG_ID_REPLAY_START_ALT)
+        {
+            in_binary = true;
+        }
         // Extract remainder of message as binary, if it exists
         const UNENCRYPTED: EncryptionProtocol = EncryptionProtocol::Unencrypted;
         const BC_ENCRYPTED: EncryptionProtocol = EncryptionProtocol::BCEncrypt;
@@ -176,19 +214,130 @@ fn bc_modern_msg<'a>(
             _ => context.get_encrypted(),
         };
 
-        let processed_payload_buf =
-            encryption_protocol.decrypt(header.channel_id as u32, payload_buf);
-        if context.in_bin_mode.contains(&(header.msg_num)) || in_binary {
-            payload = match (context.get_encrypted(), encrypted_len) {
-                (EncryptionProtocol::FullAes { .. }, Some(encrypted_len)) => {
-                    // if if context.debug {
-                    //     log::trace!("Binary: {:X?}", &processed_payload_buf[0..30]);
-                    // }
-                    Some(BcPayloads::Binary(
-                        processed_payload_buf[0..(encrypted_len as usize)].to_vec(),
-                    ))
+        // Determine if this packet needs payload decryption.
+        // SDK behavior (handleResponseV20): when encryptLen is absent from the Extension,
+        // it stays at init value 0xFFFFFFFF; cast to signed = -1; the check
+        // `0 < (int)encryptLen` fails → decrypt is skipped → payload is plaintext.
+        // This applies to BOTH:
+        //   (a) continuation packets (ext_len=0, no Extension at all), AND
+        //   (b) packets with Extension containing binaryData=1 but no encryptLen tag.
+        // Only decrypt when encryptLen is explicitly present and > 0.
+        let is_continuation_binary = ext_len == 0
+            && encrypt_region_len.is_none()
+            && context.in_bin_mode.borrow().contains(&(header.msg_num as u16));
+
+        // Replay diagnostic: log ext_len and branch so we can see if camera sends extension and if we treat as continuation.
+        if (header.msg_id == MSG_ID_REPLAY_START || header.msg_id == MSG_ID_REPLAY_START_ALT)
+            && payload_len > 0
+        {
+            log::debug!(
+                "E1 replay branch: msg_num={} ext_len={} payload_len={} in_binary={} encrypt_region={} is_continuation={}",
+                header.msg_num,
+                ext_len,
+                payload_len,
+                in_binary,
+                encrypt_region_len.is_some(),
+                is_continuation_binary
+            );
+        }
+
+        let processed_payload_buf = if is_continuation_binary {
+            // SDK (handleResponseV20): for binary messages (MSG 3/5/8), only bytes
+            // [encryptPos, encryptPos+encryptLen) are decrypted. Continuation packets
+            // have no Extension XML so encryptLen stays at init value 0 → SDK skips
+            // decrypt entirely. Pass through as plaintext.
+            log::debug!(
+                "E1 replay: continuation packet msg_num={} len={} — no Extension, passing as plaintext (SDK: encryptLen=0)",
+                header.msg_num,
+                payload_buf.len()
+            );
+            payload_buf.to_vec()
+        } else if let Some(len) = encrypt_region_len {
+            // SDK: only [encryptPos, encryptPos+encryptLen) of the binary payload is decrypted (payload_buf = after extension).
+            let start = encrypt_region_start.unwrap_or(0) as usize;
+            let len = len as usize;
+            if start <= payload_buf.len() && start.saturating_add(len) <= payload_buf.len() {
+                let mut out = payload_buf.to_vec();
+                let decrypted = encryption_protocol.decrypt(
+                    header.channel_id as u32,
+                    &payload_buf[start..start + len],
+                );
+                out[start..start + len].copy_from_slice(&decrypted);
+                out
+            } else {
+                // SDK errors when encryptPos+encryptLen > payload; does NOT fallback
+                // to full decrypt. Pass through as-is.
+                log::warn!(
+                    "E1: encryptPos({})+encryptLen({}) exceeds payload({}), skipping binary decrypt",
+                    start, len, payload_buf.len()
+                );
+                payload_buf.to_vec()
+            }
+        } else if in_binary && encrypt_region_len.is_none() {
+            // SDK: Extension has binaryData=1 but no encryptLen → absent encryptLen
+            // defaults to 0xFFFFFFFF, (int)0xFFFFFFFF = -1, `0 < -1` fails → plaintext.
+            // E1 sends large video continuation packets this way (only the first packet
+            // of a BcMedia group carries explicit encryptLen for the encrypted header region).
+            log::debug!(
+                "E1 replay: binary packet with no encryptLen msg_num={} len={} — passing as plaintext",
+                header.msg_num,
+                payload_buf.len()
+            );
+            payload_buf.to_vec()
+        } else {
+            encryption_protocol.decrypt(header.channel_id as u32, payload_buf)
+        };
+
+        // E1 replay: log first binary packet result so we can verify 00dc appears (key/IV/region correct).
+        if (header.msg_id == MSG_ID_REPLAY_START || header.msg_id == MSG_ID_REPLAY_START_ALT)
+            && (encrypt_region_len.is_some() || in_binary)
+        {
+            let has_00dc = processed_payload_buf.len() >= 4
+                && (processed_payload_buf[..4] == *b"00dc"
+                    || (processed_payload_buf.len() > 32 && processed_payload_buf[32..36] == *b"00dc"));
+            log::debug!(
+                "E1 replay first/region packet: msg_num={} encrypt_region={:?} payload_len={} processed_len={} has_00dc={} first_32={:02x?}",
+                header.msg_num,
+                encrypt_region_len.map(|l| (encrypt_region_start.unwrap_or(0), l)),
+                payload_buf.len(),
+                processed_payload_buf.len(),
+                has_00dc,
+                &processed_payload_buf[..processed_payload_buf.len().min(32)]
+            );
+        }
+
+        if context.in_bin_mode.borrow().contains(&(header.msg_num)) || in_binary {
+            payload = if context.replay_raw_binary
+                && (header.msg_id == MSG_ID_REPLAY_START
+                    || header.msg_id == MSG_ID_REPLAY_START_ALT
+                    || header.msg_id == MSG_ID_REPLAY_DESKTOP)
+            {
+                // Skip decryption for replay (test: some cameras send replay in plaintext).
+                // Set NEOLINK_REPLAY_RAW=1 to enable.
+                log::debug!("Replay: passing binary payload without decryption (NEOLINK_REPLAY_RAW)");
+                Some(BcPayloads::Binary(payload_buf.to_vec()))
+            } else {
+                match (context.get_encrypted(), encrypt_region_len) {
+                    (EncryptionProtocol::FullAes { .. }, Some(_)) => {
+                        // E1 or FullAes with encryptLen: we decrypted only the region; rest is plaintext.
+                        Some(BcPayloads::Binary(processed_payload_buf.to_vec()))
+                    }
+                    (EncryptionProtocol::Unencrypted, _) => {
+                        Some(BcPayloads::Binary(payload_buf.to_vec()))
+                    }
+                    (EncryptionProtocol::Aes { .. }, None) => {
+                        // Aes cameras encrypt control messages only; binary media streams are plaintext.
+                        // Applying AES decrypt to plaintext BcMedia produces garbled output (e.g. Argus 2).
+                        log::debug!(
+                            "Aes (non-FullAes) camera: binary payload without explicit encryptLen — passing as plaintext (media not encrypted)"
+                        );
+                        Some(BcPayloads::Binary(payload_buf.to_vec()))
+                    }
+                    _ => {
+                        // FullAes without encryptLen (plaintext passthrough), or BCEncrypt.
+                        Some(BcPayloads::Binary(processed_payload_buf.to_vec()))
+                    }
                 }
-                _ => Some(BcPayloads::Binary(payload_buf.to_vec())),
             };
         } else {
             if context.debug {
@@ -416,7 +565,7 @@ mod tests {
         let sample1 = include_bytes!("samples/modern_video_start1.bin");
         let sample2 = include_bytes!("samples/modern_video_start2.bin");
 
-        let mut context = BcContext::new_with_encryption(EncryptionProtocol::BCEncrypt);
+        let context = BcContext::new_with_encryption(EncryptionProtocol::BCEncrypt);
 
         let msg1 = Bc::deserialize(&context, &mut BytesMut::from(&sample1[..])).unwrap();
         match msg1.body {
@@ -433,7 +582,7 @@ mod tests {
             _ => panic!(),
         }
 
-        context.in_bin_mode.insert(msg1.meta.msg_num);
+        context.in_bin_mode.borrow_mut().insert(msg1.meta.msg_num);
         let msg2 = Bc::deserialize(&context, &mut BytesMut::from(&sample2[..])).unwrap();
         match msg2.body {
             BcBody::ModernMsg(ModernMsg {
@@ -576,5 +725,71 @@ mod tests {
                     }),
             }) if version == "1.1" && stream_type == Some("mainStream".to_string())
         );
+    }
+
+    #[test]
+    fn test_bc_e1_mixed_replay() {
+        init();
+        // Use BCEncrypt (default AES-128-CFB)
+        let context = BcContext::new_with_encryption(EncryptionProtocol::BCEncrypt);
+
+        // 1. Enable in_bin_mode for msg_num=100
+        let msg_num = 100u16;
+        context.in_bin_mode.borrow_mut().insert(msg_num);
+
+        // 2. Test XML Packet (Plaintext Passthrough)
+        // E1 sends plaintext XML even though it's a "continuation binary" packet (no extension).
+        // Our fix should detect "<?xml" and skip decryption.
+        let xml_payload = b"<?xml version=\"1.0\"?><SomeData>Plaintext</SomeData>";
+        let mut buf_b = Vec::new();
+        // Header: Magic, MsgID=5 (Replay), BodyLen, Chan=0, Stream=0, MsgNum=100, Class=0, PayloadOffset=0
+        buf_b.extend_from_slice(&0x0abcdef0u32.to_le_bytes()); // MAGIC_HEADER
+        buf_b.extend_from_slice(&5u32.to_le_bytes()); // MsgID 5
+        buf_b.extend_from_slice(&(xml_payload.len() as u32).to_le_bytes()); // BodyLen
+        buf_b.push(0); // Chan
+        buf_b.push(0); // Stream
+        buf_b.extend_from_slice(&msg_num.to_le_bytes()); // MsgNum
+        buf_b.extend_from_slice(&0u16.to_le_bytes()); // Response
+        buf_b.extend_from_slice(&0u16.to_le_bytes()); // Class=0 → has_payload_offset=true
+        buf_b.extend_from_slice(&0u32.to_le_bytes()); // PayloadOffset=0 (ext_len=0)
+
+        buf_b.extend_from_slice(xml_payload);
+
+        let msg_b = Bc::deserialize(&context, &mut BytesMut::from(&buf_b[..])).unwrap();
+        match msg_b.body {
+             BcBody::ModernMsg(ModernMsg { payload: Some(BcPayloads::Binary(data)), .. }) => {
+                 // Should be Passthrough (Plaintext)
+                 assert_eq!(data, xml_payload, "XML payload should be passed through plaintext");
+             },
+             _ => panic!("Expected Binary payload for XML packet, got {:?}", msg_b.body),
+        }
+
+        // 3. Test Binary Packet (Encrypted)
+        // E1 sends encrypted binary data (e.g. video) in continuation packets.
+        // Our fix should decrypt this.
+        let raw_bin_payload = b"\xca\x75\xbe\x31\x81\x78\xbd\x31";
+        let mut buf_c = Vec::new();
+        // Header: Same as B but different payload
+        buf_c.extend_from_slice(&0x0abcdef0u32.to_le_bytes());
+        buf_c.extend_from_slice(&5u32.to_le_bytes());
+        buf_c.extend_from_slice(&(raw_bin_payload.len() as u32).to_le_bytes());
+        buf_c.push(0);
+        buf_c.push(0);
+        buf_c.extend_from_slice(&msg_num.to_le_bytes());
+        buf_c.extend_from_slice(&0u16.to_le_bytes());
+        buf_c.extend_from_slice(&0u16.to_le_bytes());
+        buf_c.extend_from_slice(&0u32.to_le_bytes()); // PayloadOffset=0
+
+        buf_c.extend_from_slice(raw_bin_payload);
+
+        let msg_c = Bc::deserialize(&context, &mut BytesMut::from(&buf_c[..])).unwrap();
+        match msg_c.body {
+             BcBody::ModernMsg(ModernMsg { payload: Some(BcPayloads::Binary(data)), .. }) => {
+                 // SDK: continuation binary (no Extension) has encryptLen=0 → not decrypted.
+                 // Data is passed through as plaintext.
+                 assert_eq!(data, raw_bin_payload, "Continuation binary should pass through as plaintext (SDK: no encryptLen)");
+             },
+             _ => panic!("Expected Binary payload for Binary packet, got {:?}", msg_c.body),
+        }
     }
 }

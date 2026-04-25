@@ -123,7 +123,7 @@ impl BcCamera {
             Ok(battery_info)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not accept the battery info (maybe no battery) command.",
             })
         }

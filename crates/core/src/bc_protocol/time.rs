@@ -63,7 +63,7 @@ impl BcCamera {
                     Ok(dt) => dt,
                     Err(_) => {
                         return Err(Error::UnintelligibleReply {
-                            reply: std::sync::Arc::new(Box::new(msg)),
+                            _reply: std::sync::Arc::new(Box::new(msg)),
                             why: "Could not parse date",
                         })
                     }
@@ -84,7 +84,7 @@ impl BcCamera {
             }
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Reply did not contain SystemGeneral with all time fields filled out",
             })
         }
@@ -142,7 +142,7 @@ impl BcCamera {
         {
         } else {
             return Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not accept the set time command.",
             });
         }

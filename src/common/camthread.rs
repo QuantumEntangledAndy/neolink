@@ -71,7 +71,7 @@ impl NeoCamThread {
                             missed_pings = 0;
                             continue
                         },
-                        Ok(Err(neolink_core::Error::UnintelligibleReply { reply, why })) => {
+                        Ok(Err(neolink_core::Error::UnintelligibleReply { _reply: reply, why })) => {
                             // Camera does not support pings just wait forever
                             log::trace!("Pings not supported: {reply:?}: {why}");
                             futures::future::pending().await

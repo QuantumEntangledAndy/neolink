@@ -195,7 +195,7 @@ impl BcCamera {
             Ok(msg_num)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not accept the request to start motion",
             })
         }

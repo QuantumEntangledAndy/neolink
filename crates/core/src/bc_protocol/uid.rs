@@ -42,7 +42,7 @@ impl BcCamera {
             Ok(uid_xml)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Expected Uid xml but it was not recieved",
             })
         }

@@ -44,6 +44,19 @@ pub struct StreamData {
 }
 
 impl StreamData {
+    /// Create stream data from a task handle and receiver (e.g. for replay streams).
+    pub(crate) fn from_parts(
+        handle: JoinHandle<Result<()>>,
+        rx: Receiver<Result<BcMedia>>,
+        abort_handle: CancellationToken,
+    ) -> Self {
+        Self {
+            handle: Some(handle),
+            rx,
+            abort_handle,
+        }
+    }
+
     /// Pull data from the camera's buffer
     /// This returns raw BcMedia packets
     pub async fn get_data(&mut self) -> Result<Result<BcMedia>> {
@@ -79,15 +92,24 @@ impl StreamData {
 
 impl Drop for StreamData {
     fn drop(&mut self) {
-        log::trace!("Drop StreamData");
+        log::info!("StreamData::drop: starting");
         self.abort_handle.cancel();
-        if let Some(handle) = self.handle.take() {
-            let _gt = tokio::runtime::Handle::current().enter();
-            tokio::task::spawn(async move {
-                let _ = handle.await;
-            });
+        log::info!("StreamData::drop: abort_handle cancelled");
+        if let Some(handle) = self.handle.as_ref() {
+            if handle.is_finished() {
+                log::info!("StreamData::drop: handle is finished, dropping");
+            } else {
+                log::warn!("StreamData::drop: handle is NOT finished, detaching (task may continue)");
+            }
+        } else {
+            log::info!("StreamData::drop: no handle to drop");
         }
-        log::trace!("Dropped MotionData");
+        // Just drop the handle. If it's finished, dropping is fine.
+        // If it's not finished, dropping detaches it (task continues but we don't wait).
+        // We've already cancelled via abort_handle, so the task should finish soon.
+        // This avoids spawning a task that keeps the runtime alive.
+        self.handle.take();
+        log::info!("StreamData::drop: complete");
     }
 }
 
@@ -197,7 +219,7 @@ impl BcCamera {
             {
             } else {
                 return Err(Error::UnintelligibleReply {
-                    reply: std::sync::Arc::new(Box::new(msg)),
+                    _reply: std::sync::Arc::new(Box::new(msg)),
                     why: "The camera did not accept the stream start command.",
                 });
             }

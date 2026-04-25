@@ -2,6 +2,7 @@ use crate::Credentials;
 
 pub use super::crypto::EncryptionProtocol;
 pub use super::xml::{BcPayloads, BcXml, Extension};
+use std::cell::RefCell;
 use std::collections::HashSet;
 
 pub(super) const MAGIC_HEADER: u32 = 0x0abcdef0;
@@ -104,6 +105,43 @@ pub const MSG_ID_GET_ZOOM_FOCUS: u32 = 294;
 pub const MSG_ID_SET_ZOOM_FOCUS: u32 = 295;
 /// Get the floodlight task xml
 pub const MSG_ID_FLOODLIGHT_TASKS_READ: u32 = 438;
+/// Get HDD/SD disk list (HDDInfoList)
+pub const MSG_ID_HDD_INFO_LIST: u32 = 102;
+/// Format disk(s) (HddInitList)
+pub const MSG_ID_HDD_INIT_LIST: u32 = 103;
+/// Replay: start playback (FileInfoList / BCMedia stream)
+pub const MSG_ID_REPLAY_START: u32 = 5;
+/// Replay: alternate start (some cameras accept this instead of MSG 5 for replay)
+/// NOTE: This is the same wire ID as MSG_ID_DOWNLOAD_FILE_BY_NAME (NET_DOWNLOAD_V20 in Android SDK).
+/// The camera dispatches on payload format: XML FileInfoList = replay; binary BC_DOWNLOAD_BY_NAME_INFO = file download.
+pub const MSG_ID_REPLAY_START_ALT: u32 = 8;
+/// Download a specific SD card file by name (NET_DOWNLOAD_V20, binary BC_DOWNLOAD_BY_NAME_INFO payload 0xD48 bytes).
+/// Confirmed from Android SDK Ghidra analysis: table entry key=8, BaichuanDownloader::downloadFileByName sends MSG 8.
+pub const MSG_ID_DOWNLOAD_FILE_BY_NAME: u32 = 8;
+/// Stop download-file-by-name (NET_DOWNLOAD_STOP_V20, key=9). No payload.
+pub const MSG_ID_DOWNLOAD_FILE_STOP: u32 = 9;
+/// Replay: stop playback
+pub const MSG_ID_REPLAY_STOP: u32 = 7;
+/// Replay: file details by name (FileInfoList)
+pub const MSG_ID_REPLAY_FILE_BY_NAME: u32 = 13;
+/// Replay: get file list handle for day (FileInfoList)
+pub const MSG_ID_REPLAY_FILE_LIST_HANDLE: u32 = 14;
+/// Replay: list files by handle (FileInfoList)
+pub const MSG_ID_REPLAY_FILE_LIST: u32 = 15;
+/// Replay: FileInfoList variant (camera replies 200 OK only)
+pub const MSG_ID_REPLAY_FILE_LIST_16: u32 = 16;
+/// Replay: seek to position (ReplaySeek)
+pub const MSG_ID_REPLAY_SEEK: u32 = 123;
+/// Replay: desktop app binary replay (CMD 0x17d, payload 0x944 = 20-byte inner + 0x930 body)
+pub const MSG_ID_REPLAY_DESKTOP: u32 = 0x17d;
+/// Replay: get day records in range (DayRecords)
+pub const MSG_ID_DAY_RECORDS: u32 = 142;
+/// Download by time range (BC_DOWNLOAD_BY_TIME_INFO binary 0x480 bytes). End-of-stream = response 331.
+pub const MSG_ID_DOWNLOAD_BY_TIME: u32 = 143;
+/// Stop download-by-time (no payload)
+pub const MSG_ID_DOWNLOAD_STOP: u32 = 144;
+/// Alarm video search: find recordings by alarm/AI type (findAlarmVideo). 0xAF = 175.
+pub const MSG_ID_ALARM_VIDEO_SEARCH: u32 = 175;
 
 /// An empty password in legacy format
 pub const EMPTY_LEGACY_PASSWORD: &str =
@@ -223,9 +261,12 @@ pub struct BcMeta {
 #[derive(Debug)]
 pub(crate) struct BcContext {
     pub(crate) credentials: Credentials,
-    pub(crate) in_bin_mode: HashSet<u16>,
+    pub(crate) in_bin_mode: RefCell<HashSet<u16>>,
     pub(crate) encryption_protocol: EncryptionProtocol,
     pub(crate) debug: bool,
+    /// If true, replay binary payloads (MSG 5/8) are passed through without decryption.
+    /// Set via env NEOLINK_REPLAY_RAW=1 to test cameras that send replay in plaintext.
+    pub(crate) replay_raw_binary: bool,
 }
 
 impl Bc {
@@ -263,11 +304,15 @@ impl Bc {
 
 impl BcContext {
     pub(crate) fn new(credentials: Credentials) -> BcContext {
+        let replay_raw_binary = std::env::var("NEOLINK_REPLAY_RAW")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         BcContext {
             credentials,
-            in_bin_mode: HashSet::new(),
+            in_bin_mode: RefCell::new(HashSet::new()),
             encryption_protocol: EncryptionProtocol::Unencrypted,
             debug: false,
+            replay_raw_binary,
         }
     }
 
@@ -275,9 +320,10 @@ impl BcContext {
     pub(crate) fn new_with_encryption(encryption_protocol: EncryptionProtocol) -> BcContext {
         BcContext {
             credentials: Default::default(),
-            in_bin_mode: HashSet::new(),
+            in_bin_mode: RefCell::new(HashSet::new()),
             encryption_protocol,
             debug: false,
+            replay_raw_binary: false,
         }
     }
 
@@ -290,12 +336,17 @@ impl BcContext {
     }
 
     pub(crate) fn binary_on(&mut self, msg_id: u16) {
-        self.in_bin_mode.insert(msg_id);
+        self.in_bin_mode.borrow_mut().insert(msg_id);
     }
 
     #[allow(unused)] // Used in tests
     pub(crate) fn binary_off(&mut self, msg_id: u16) {
-        self.in_bin_mode.remove(&msg_id);
+        self.in_bin_mode.borrow_mut().remove(&msg_id);
+    }
+
+    /// Enable binary mode for msg_id (used from parser with &context).
+    pub(crate) fn binary_on_shared(&self, msg_id: u16) {
+        self.in_bin_mode.borrow_mut().insert(msg_id);
     }
 
     pub(crate) fn debug_on(&mut self) {

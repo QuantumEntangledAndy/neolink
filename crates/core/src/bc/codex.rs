@@ -6,7 +6,7 @@
 use crate::bc::model::*;
 use crate::bc::xml::*;
 use crate::{Credentials, Error, Result};
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use nom::AsBytes;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -84,12 +84,25 @@ impl Decoder for BcCodex {
     }
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
-        // trace!("Decoding: {:X?}", src);
-        let bc = Bc::deserialize(&self.context, src);
-        // trace!("As: {:?}", bc);
-        let bc = match bc {
+        const MAGIC_LE: [u8; 4] = [0xf0, 0xde, 0xbc, 0x0a];
+        const MAGIC_REV_LE: [u8; 4] = [0xa0, 0xcb, 0xed, 0x0f];
+        // Use the current read window (chunk); after a previous decode the Buf cursor advanced.
+        let chunk = src.chunk();
+        // Strip 4-byte prefix before BC frame. E1 sends 4 bytes (sometimes zeros, sometimes not) then magic.
+        if chunk.len() >= 8 && (chunk[4..8] == MAGIC_LE || chunk[4..8] == MAGIC_REV_LE) {
+            src.advance(4);
+        }
+        let bc = match Bc::deserialize(&self.context, src) {
             Ok(bc) => bc,
             Err(Error::NomIncomplete(_)) => return Ok(None),
+            Err(Error::NomError(ref msg)) if msg.contains("Magic invalid") => {
+                let chunk = src.chunk();
+                // Fewer than 8 bytes: might be partial prefix or partial frame, wait for more
+                if chunk.len() < 8 {
+                    return Ok(None);
+                }
+                return Err(Error::NomError(msg.clone()));
+            }
             Err(e) => return Err(e),
         };
         // Update context

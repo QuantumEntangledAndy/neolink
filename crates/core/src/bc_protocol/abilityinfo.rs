@@ -48,7 +48,7 @@ impl BcCamera {
             Ok(ability_info)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Expected AbilityInfo xml but it was not recieved",
             })
         }

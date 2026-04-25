@@ -70,6 +70,15 @@ impl BcMedia {
                     buf,
                 )?
             }
+            BcMedia::RawReplayChunk(_) => {
+                return Err(crate::Error::Other("RawReplayChunk is receive-only and cannot be serialized"));
+            }
+            BcMedia::ReplayStarted(_) => {
+                return Err(crate::Error::Other("ReplayStarted is receive-only and cannot be serialized"));
+            }
+            BcMedia::StreamEnd => {
+                return Err(crate::Error::Other("StreamEnd is receive-only and cannot be serialized"));
+            }
         };
 
         Ok(buf)

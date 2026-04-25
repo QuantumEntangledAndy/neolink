@@ -46,6 +46,7 @@ local udp_packet_count = ProtoField.int32("baichuan.udp_packet_count", "udp_pack
 local udp_last_ack_packet = ProtoField.int32("baichuan.udp_last_ack_packet", "udp_last_ack_packet", base.DEC)
 local udp_ack_payload_size = ProtoField.int32("baichuan.udp_ack_payload_size", "ack_payload_size", base.DEC)
 local udp_size = ProtoField.int32("baichuan.udp_size", "udp_size", base.DEC)
+local report_subcmd = ProtoField.uint32("baichuan.report_subcmd", "Report sub-command", base.HEX)
 
 bc_protocol.fields = {
   magic_bytes,
@@ -74,9 +75,12 @@ bc_protocol.fields = {
   udp_last_ack_packet,
   udp_ack_payload_size,
   udp_size,
+  report_subcmd,
 }
 
+-- Message IDs from libBCSDKWrapper SO handleResponseV20 + notes (baichuan-bcsdk-reverse-engineering.md)
 local message_types = {
+  [0]="Device report (container)",  -- SO: handleResponseV20 case 0/0x21 → handleDeviceReportCmds
   [1]="login", -- <Encryption> <LoginUser>/<LoginNet> <DeviceInfo>/<StreamInfoList>
   [2]="logout",
   [3]="<Preview> (video)",
@@ -119,15 +123,15 @@ local message_types = {
   [59]="<UserList> (write)",
   [65]="<ConfigFileInfo> (Export)",
   [66]="<ConfigFileInfo> (Import)",
-  [67]="<ConfigFileInfo> (FW Upgrade)",
+  [67]="<ConfigFileInfo> (FW Upgrade)",  -- SO: 0x43 upgrade recv
   [68]="<Ftp>",
   [69]="<Ftp> (write)",
   [70]="<FtpTask>",
   [71]="<FtpTask> (write)",
   [76]="<Ip>", -- <Dhcp>/<AutoDNS>/<Dns>
   [77]="<Ip> (write)",
-  [78]="<VideoInput> (IPC desc)",
-  [79]="<Serial> (ptz)",
+  [78]="<VideoInput> (IPC desc)",  -- SO: 0x4e → device report path
+  [79]="<Serial> (ptz)",  -- SO: 0x4f → device report path
   [80]="<VersionInfo>",
   [81]="<Record> (schedule)",
   [82]="<Record> (write)",
@@ -154,19 +158,23 @@ local message_types = {
   [116]="<Wifi>",
   [120]="<OnlineUserList>",
   [122]="<PerformanceInfo>",
-  [123]="<ReplaySeek>",
+  [123]="<ReplaySeek>",  -- SO: 0x7b; notes: ReplaySeek report 0x123
   [124]="<PushInfo>",
   [132]="<VideoInput>", -- <InputAdvanceCfg>
   [133]="<RfAlarm>",
   [141]="<Email> (test)",
-  [142]="<DayRecords>",
-  [145]="<ChannelInfoList>",
+  [142]="<DayRecords>",  -- SO: 0x8e BaichuanReplayer 0x836 handler
+  [143]="<FileInfoList> (download video)",  -- SO: 0x8f BaichuanDownloader
+  [144]="<FileInfoList?>",  -- PCAP: seen in capture; notes: HddInit 0x90
+  [145]="<ChannelInfoList>",  -- SO: 0x91 → device report path
   [146]="<StreamInfoList>",
   [151]="<AbilityInfo>",
   [190]="PTZ Preset",
+  [192]="<unknown>",  -- 0xc0: RE ambiguous (size/offset in SO)
   [194]="<Ftp> (test)",
   [195]="<AutoUpdate>",
   [199]="<Support>",
+  [202]="No-op (0xca)",  -- SO: handleResponseV20 early exit
   [208]="<LedState>",
   [209]="<LedState> (write)",
   [210]="<PTOP>",
@@ -179,11 +187,14 @@ local message_types = {
   [219]="<PushTask>",
   [228]="<Crop>",
   [229]="<Crop> (write)",
-  [230]="<cropSnap>",
+  [230]="<cropSnap>",  -- SO: 0xe6 BaichuanDownloader::handleXMLDataResponse
   [232]="<AudioTask>",
-  [234]="UDP Keep Alive",
-  [252]="<BatteryInfoList>",
+  [234]="UDP Keep Alive",  -- SO: 0xea also device report path
+  [241]="Device report (0xf1)",  -- SO: handleDeviceReportCmds
+  [242]="Device report (0xf2)",
+  [252]="<BatteryInfoList>",  -- SO: 0xfc device report
   [253]="<BatteryInfo>",
+  [255]="Device report (0xff)",
   [263]="<audioPlayInfo>",
   [268]="<CloudBindInfo>",
   [281]="<BindNasInfoList>",
@@ -192,12 +203,79 @@ local message_types = {
   [272]="<findAlarmVideo>",
   [273]="<alarmVideoInfo>",
   [274]="<findAlarmVideo>",
-  [291]="<FloodlightStatusList>",
+  [291]="<FloodlightStatusList>",  -- SO: 0x123 device report (ReplaySeek report)
   [294]="<StartZoomFocus> (read)",
   [295]="<StartZoomFocus> (write)",
+  [298]="<Replay/playback stream?>",  -- 0x12a: preview/replay binary
   [299]="<AiCfg>",
   [319]="<timelapseCfg>",
   [342]="<AiDetectCfg>",
+  [357]="<Downloader> (0x165)",  -- SO: BaichuanDownloader::handleXMLDataResponse
+  [362]="<Downloader> (0x16a)",
+  [380]="Device report (0x17c)",  -- SO: handleDeviceReportCmds
+  [381]="Replay XML response (0x17d)",  -- SO: BaichuanReplayer::handleXMLDataResponse
+  [382]="Replay close stream V2 (0x17e)",  -- SO: BaichuanReplayer::playbackStreamCloseV2
+  [398]="Device report (0x18e)",
+  [399]="Device report (0x18f)",
+  [407]="Device report (0x197)",
+  [408]="Device report (0x198)",
+  [410]="Device report (0x19a)",
+  [412]="Device report (0x19c)",
+  [421]="Device report (0x1a5)",
+  [429]="Device report (0x1ad)",
+  [438]="Device report (0x1b6)",
+  [457]="Device report (0x1c9)",
+  [464]="Device report (0x1d0)",
+  [471]="Device report (0x1d7)",
+  [484]="Device report response container (0x1e4)",  -- SO: triggers handleDeviceReportCmds when handle==0
+  [490]="Device report (0x1ea)",
+  [535]="<Downloader> (0x217)",
+  [542]="Device report (0x21e)",
+  [547]="Device report (0x223)",
+  [573]="Device report (0x23d)",
+  [580]="Device report (0x244)",
+  [588]="Device report (0x24c)",
+  [593]="Device report (0x251)",
+  [600]="Device report (0x258)",
+  [607]="Device report (0x25f)",
+  [623]="Device report (0x26f)",  -- SO: handleDeviceReportCmds template 0xce7
+  [634]="Device report (0x27a)",
+  [640]="Device report (0x280)",
+  [646]="<Downloader> (0x286)",
+  [653]="<Downloader> (0x28d)",
+  [654]="Device report (0x28e)",
+  [657]="Device report (0x291)",
+  [663]="Device report (0x297)",
+  [668]="<Downloader> (0x29c)",
+  [678]="Device report (0x2a6)",
+  [693]="Device report (0x2b5)",
+  [723]="Device report (0x2d3)",
+  [736]="Device report (0x2e0)",
+  [753]="Device report (0x2f1)",
+}
+
+-- Device report message IDs (handleDeviceReportCmds path). Sub-command at body offset 4; see notes/device-report-message-ids.md
+local device_report_msg_ids = {
+  [0]=true, [33]=true, [78]=true, [79]=true, [145]=true, [234]=true, [241]=true, [242]=true,
+  [252]=true, [255]=true, [291]=true, [380]=true, [398]=true, [399]=true, [407]=true, [438]=true,
+  [457]=true, [464]=true, [471]=true, [484]=true, [490]=true, [542]=true, [547]=true, [573]=true,
+  [580]=true, [588]=true, [600]=true, [623]=true, [634]=true, [640]=true, [654]=true, [657]=true,
+  [663]=true, [678]=true, [693]=true, [723]=true, [736]=true, [753]=true,
+}
+-- Report sub-command (at body+4) → human-readable label (from handleDeviceReportCmds + Neolink model.rs)
+local report_subcmd_names = {
+  [33]="AlarmEventList / motion", [145]="ChannelInfoList", [234]="UDP keepalive (special)",
+  [241]="Report 0xf1 (template 0x890)", [242]="Report 0xf2 (template 0x891)", [252]="BatteryInfoList",
+  [255]="Report 0xff (template 0x89e)", [291]="ReplaySeek report", [380]="Report 0x17c (template 0x90d)",
+  [398]="Report 0x18e (template 0x91b)", [399]="Report 0x18f (template 0x91c)", [407]="Report 0x197 (template 0x91f)",
+  [438]="Floodlight tasks (FloodlightTasksRead)", [457]="Report 0x1c9 (template 0x951)", [464]="Report 0x1d0 (template 0x952)",
+  [471]="Report 0x1d7 (template 0x953)", [484]="Report 0x1e4 (template 0x96d)", [490]="Report 0x1ea (template 0x965)",
+  [542]="Report 0x21e (template 0x996)", [547]="Report 0x223 (template 0x999)", [573]="Report 0x23d (template 0x9ac)",
+  [580]="Report 0x244 (template 0x9d3)", [588]="Report 0x24c (template 0x9b2)", [600]="Report 0x258 (template 0x9bc)",
+  [623]="Device report 0x26f (template 0x9d2/0xce7)", [640]="Report 0x280 (template 0x9e6)", [654]="Report 0x28e (template 0x9ea)",
+  [657]="Report 0x291 (template 0x9ed)", [663]="Report 0x297 (template 0x9f3)", [678]="Report 0x2a6 (template 0xa05)",
+  [693]="Report 0x2b5 (template 0xa0f, simpleRsp)", [723]="Report 0x2d3 (template 0xa19)", [736]="Report 0x2e0 (template 0xa22)",
+  [753]="Report 0x2f1 (template 0xa37)",
 }
 
 local message_classes = {
@@ -219,29 +297,134 @@ local header_lengths = {
 -----
 -- Decryption routine.
 -----
--- For other locations, use: LUA_CPATH=.../luagcrypt/?.so
+-- AES decryption uses either Wireshark's built-in GcryptCipher (no extra install) or
+-- optional luagcrypt. Without either, AES decryption is skipped (headers and XOR/xml_decrypt still work).
 bc_protocol.prefs.key = Pref.string("Decryption key", "",
     "Passphrase used for the camera. Required to decrypt the AES packets")
 _G.nonce = {}
 local function hexencode(str)
      return (str:gsub(".", function(char) return string.format("%02X", char:byte()) end))
 end
-local gcrypt = require("luagcrypt")
-local function aes_decrypt(data, pinfo)
-    local nonce_key = tostring(pinfo.src) .. ":" .. pinfo.src_port
-    local nonce = (_G.nonce[nonce_key] or "")
-		local raw_key = nonce .. "-" ..  bc_protocol.prefs.key
-    local iv = "0123456789abcdef"
+
+-- Minimal pure-Lua MD5 (bit32) for key derivation when using Wireshark's GcryptCipher (no luagcrypt needed).
+local function md5_binary(msg)
+  local band, bor, bxor, bnot, rshift = bit32.band, bit32.bor, bit32.bxor, bit32.bnot, bit32.rshift
+  local lshift = bit32.lshift
+  -- Rotate left by n bits (32-bit): (x << n) | (x >> (32 - n))
+  local function lrotate(x, n)
+    n = n % 32
+    return bor(band(lshift(x, n), 0xFFFFFFFF), rshift(x, 32 - n))
+  end
+  local function F(x,y,z) return bor(band(x,y), band(bnot(x),z)) end
+  local function G(x,y,z) return bor(band(x,z), band(y,bnot(z))) end
+  local function H(x,y,z) return bxor(x,bxor(y,z)) end
+  local function I(x,y,z) return bxor(y, bor(x, bnot(z))) end
+  local function bytes2word(b0,b1,b2,b3)
+    return bor(bor(bor(b0, lshift(b1,8)), lshift(b2,16)), lshift(b3,24))
+  end
+  local S = {
+    7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+    5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+    4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+    6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21
+  }
+  local K = {
+    0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,
+    0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,
+    0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,
+    0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,
+    0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,
+    0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,
+    0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,
+    0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391
+  }
+  local len = #msg
+  local buf = {}
+  for i = 1, len do buf[i] = msg:byte(i) end
+  buf[len + 1] = 0x80
+  local pad = (56 - ((len + 1) % 64) + 64) % 64
+  for _ = 1, pad do buf[#buf + 1] = 0 end
+  local lo = band(len * 8, 0xFFFFFFFF)
+  local hi = math.floor(len * 8 / 0x100000000)
+  for _, v in ipairs({ band(lo, 0xFF), band(rshift(lo, 8), 0xFF), band(rshift(lo, 16), 0xFF), band(rshift(lo, 24), 0xFF), band(hi, 0xFF), band(rshift(hi, 8), 0xFF), band(rshift(hi, 16), 0xFF), band(rshift(hi, 24), 0xFF) }) do buf[#buf + 1] = v end
+  local A, B, C, D = 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476
+  for chunk = 1, #buf, 64 do
+    local X = {}
+    for i = 0, 15 do
+      local j = chunk + i * 4
+      X[i + 1] = bytes2word(buf[j], buf[j+1], buf[j+2], buf[j+3])
+    end
+    local a, b, c, d = A, B, C, D
+    for i = 0, 63 do
+      local f, g
+      if i <= 15 then f = F(b,c,d); g = i
+      elseif i <= 31 then f = G(b,c,d); g = (5 * i + 1) % 16
+      elseif i <= 47 then f = H(b,c,d); g = (3 * i + 5) % 16
+      else f = I(b,c,d); g = (7 * i) % 16
+      end
+      local t = d
+      d = c
+      c = b
+      b = band(b + lrotate(band(a + f + K[i + 1] + X[g + 1], 0xFFFFFFFF), S[i + 1]), 0xFFFFFFFF)
+      a = t
+    end
+    A, B, C, D = band(A + a, 0xFFFFFFFF), band(B + b, 0xFFFFFFFF), band(C + c, 0xFFFFFFFF), band(D + d, 0xFFFFFFFF)
+  end
+  local function word2bytes(w)
+    return band(w, 0xFF), band(rshift(w, 8), 0xFF), band(rshift(w, 16), 0xFF), band(rshift(w, 24), 0xFF)
+  end
+  return string.char(word2bytes(A), word2bytes(B), word2bytes(C), word2bytes(D))
+end
+
+local gcrypt
+do
+  local ok, mod = pcall(require, "luagcrypt")
+  gcrypt = ok and mod or nil
+end
+
+local function derive_aes_key(pinfo)
+  local nonce_key = tostring(pinfo.src) .. ":" .. pinfo.src_port
+  local nonce = (_G.nonce[nonce_key] or "")
+  local raw_key = nonce .. "-" .. bc_protocol.prefs.key
+  local key_hex
+  if gcrypt then
     local hasher = gcrypt.Hash(gcrypt.MD_MD5)
     hasher:write(raw_key)
-    local key = string.sub(hexencode(hasher:read()),0,16)
-    local ciphertext = data
+    key_hex = hexencode(hasher:read())
+  else
+    key_hex = hexencode(md5_binary(raw_key))
+  end
+  return string.sub(key_hex, 1, 16)
+end
+
+local function aes_decrypt(data, pinfo)
+  local key = derive_aes_key(pinfo)
+  local iv = "0123456789abcdef"
+  local ciphertext = data
+
+  -- Prefer Wireshark's built-in GcryptCipher (no luagcrypt needed)
+  if GcryptCipher and GCRY_CIPHER_AES256 and GCRY_CIPHER_MODE_CFB then
+    local ok, decrypted = pcall(function()
+      local cipher = GcryptCipher.open(GCRY_CIPHER_AES256, GCRY_CIPHER_MODE_CFB, 0)
+      cipher:setkey(ByteArray.new(key))
+      cipher:setiv(ByteArray.new(iv))
+      return cipher:decrypt(nil, ByteArray.new(ciphertext, true))
+    end)
+    if ok and decrypted and decrypted:len() > 0 then
+      return decrypted
+    end
+  end
+
+  -- Fallback: luagcrypt (optional, build from source)
+  if gcrypt then
     local cipher = gcrypt.Cipher(gcrypt.CIPHER_AES256, gcrypt.CIPHER_MODE_CFB)
     cipher:setkey(key)
     cipher:setiv(iv)
     local decrypted = cipher:decrypt(ciphertext)
-    local result = ByteArray.new(decrypted, true)
-    return result
+    return ByteArray.new(decrypted, true)
+  end
+
+  return ByteArray.new("", true)
 end
 
 local function xml_decrypt(ba, offset)
@@ -344,6 +527,13 @@ local function process_body(header, body_buffer, bc_subtree, pinfo)
 
   local body = bc_subtree:add(bc_protocol, body_buffer(0,header.msg_len),
     "Baichuan Message Body, " .. header.class .. ", length: " .. header.msg_len .. ", type " .. header.msg_type)
+
+  -- Device report: sub-command at body offset 4 (handleDeviceReportCmds iVar1)
+  if device_report_msg_ids[header.msg_type] and header.msg_len >= 8 then
+    local subcmd = body_buffer(4, 4):le_uint()
+    local label = report_subcmd_names[subcmd] or ("Report sub-command 0x" .. string.format("%x", subcmd))
+    body:add_le(report_subcmd, body_buffer(4, 4)):append_text(" (" .. label .. ")")
+  end
 
   if header.class == "legacy" then
     if header.msg_type == 1 then
@@ -596,7 +786,8 @@ local function process_bc_message(buffer, pinfo, tree)
 
       local remaining = sub_buffer:len() - header.header_len
 
-      local bc_subtree = tree:add(bc_protocol, sub_buffer(0, header.full_body_len),
+      local full_body_len = header.header_len + header.msg_len
+      local bc_subtree = tree:add(bc_protocol, sub_buffer(0, full_body_len),
         "Baichuan IP Camera Protocol, " .. header.msg_type_str .. ":" .. header.msg_type .. " message")
       process_header(sub_buffer, bc_subtree)
       if header.header_len < sub_buffer:len() then
@@ -606,7 +797,7 @@ local function process_bc_message(buffer, pinfo, tree)
         remaining = body_buffer:len() - header.msg_len
       end
 
-      -- Remaning bytes?
+      -- Remaining bytes?
       if remaining == 0 then
         continue_loop = false
       else
@@ -710,7 +901,9 @@ local function udp_reassemple(udp_header, subbuffer, more, pinfo, tree)
     local needed = start_fragment.result
     if needed == "DONE" then
       if start_fragment.message_id == udp_header.packet_count then
-        process_bc_message(start_fragment.buffer:tvb("UDP Reassembly"), pinfo, tree)
+        local rtvb = start_fragment.buffer:tvb("UDP Reassembly")
+        process_bc_message(rtvb, pinfo, tree)
+        parse_and_collect_replay(rtvb, pinfo)
       end
     elseif needed == "+1" then
       -- Cannot handle in UDP...
@@ -736,7 +929,9 @@ local function udp_reassemple(udp_header, subbuffer, more, pinfo, tree)
       end
       if reassembled:len() >= target_len then
         start_fragment.result = "DONE"
-        process_bc_message(reassembled:tvb("Reassembled UDP"), pinfo, tree)
+        local rtvb = reassembled:tvb("Reassembled UDP")
+        process_bc_message(rtvb, pinfo, tree)
+        parse_and_collect_replay(rtvb, pinfo)
       end
     end
   end
@@ -744,6 +939,7 @@ end
 
 function bc_protocol.init ()
    udp_fragments = {}
+   _replay_packets = {}
 end
 
 function bc_protocol.dissector(buffer, pinfo, tree)
@@ -782,6 +978,7 @@ function bc_protocol.dissector(buffer, pinfo, tree)
     if pinfo.can_desegment == 1 then -- TCP can use the desegment method
       if more == "DONE" then
         process_bc_message(subbuffer, pinfo, tree)
+        parse_and_collect_replay(subbuffer, pinfo)
         return
       elseif more == "+1" then
         pinfo.desegment_len = DESEGMENT_ONE_MORE_SEGMENT
@@ -857,6 +1054,96 @@ local function heuristic_checker_tcp(buffer, pinfo, tree)
     bc_protocol.dissector(buffer, pinfo, tree)
     return true
 end
+
+-----
+-- Replay stream export: collect replay binary (msg 5/8/381) and export to file.
+-----
+local REPLAY_MSG_IDS = { [5]=true, [8]=true, [381]=true }
+local REPLAY_END_STATUS = { [300]=true, [331]=true }
+local _replay_packets = {}  -- list of {pinfo, status, payload} in packet order
+
+function parse_and_collect_replay(tvb, pinfo)
+  if tvb:len() < 20 then return end
+  local offset = 0
+  while offset + 20 <= tvb:len() do
+    local sub = tvb(offset, nil)
+    local header_len = get_header_len(sub(0, nil))
+    if header_len < 0 or offset + header_len > tvb:len() then break end
+    local header = get_header(sub(0, nil))
+    local full_len = header.header_len + header.msg_len
+    if offset + full_len > tvb:len() then break end
+    if REPLAY_MSG_IDS[header.msg_type] and header.status_code and (header.status_code == 200 or REPLAY_END_STATUS[header.status_code]) then
+      if header.bin_offset and header.msg_len > header.bin_offset then
+        local bin_len = header.msg_len - header.bin_offset
+        local payload = sub(header.header_len + header.bin_offset, bin_len):bytes():raw()
+        table.insert(_replay_packets, { num = pinfo.number, status = header.status_code, payload = payload })
+      end
+    end
+    offset = offset + full_len
+  end
+end
+
+bc_protocol.prefs.replay_export_dir = Pref.string("Replay export directory", "",
+  "Directory path to save exported replay streams (replay_1.bin, replay_2.bin). Empty = current directory.")
+
+local function reassemble_replay_stream(packets)
+  table.sort(packets, function(a,b) return a.num < b.num end)
+  local out = {}
+  local skip_first_32 = true
+  for _, p in ipairs(packets) do
+    if skip_first_32 and #p.payload == 32 then
+      skip_first_32 = false
+    else
+      skip_first_32 = false
+      out[#out + 1] = p.payload
+    end
+    if REPLAY_END_STATUS[p.status] then break end
+  end
+  return table.concat(out, "")
+end
+
+local function export_replay_streams()
+  if #_replay_packets == 0 then
+    if gui and gui.message_box then
+      gui.message_box("No replay packets found in this capture.", "Export", "ok")
+    end
+    return
+  end
+  local dir = bc_protocol.prefs.replay_export_dir
+  if dir and dir ~= "" and not (dir:match("/$")) then dir = dir .. "/" end
+  dir = dir or ""
+  -- Split into streams: each stream ends at status 300/331 or at end of list
+  local streams = {}
+  local current = {}
+  for _, p in ipairs(_replay_packets) do
+    current[#current + 1] = p
+    if REPLAY_END_STATUS[p.status] then
+      streams[#streams + 1] = current
+      current = {}
+    end
+  end
+  if #current > 0 then streams[#streams + 1] = current end
+  local written = 0
+  for i, stream_packets in ipairs(streams) do
+    local raw = reassemble_replay_stream(stream_packets)
+    if #raw > 0 then
+      local ext = "bin"
+      if raw:sub(5,8) == "ftyp" then ext = "mp4" end
+      local fname = dir .. "replay_" .. i .. "." .. ext
+      local f = io.open(fname, "wb")
+      if f then
+        f:write(raw)
+        f:close()
+        written = written + 1
+      end
+    end
+  end
+  if gui and gui.message_box and written > 0 then
+    gui.message_box("Exported " .. written .. " replay stream(s) to " .. (dir ~= "" and dir or "(current directory)"), "Export", "ok")
+  end
+end
+
+register_menu("Export Baichuan Replay to File", export_replay_streams, MENU_TOOLS_UNSORTED)
 
 bc_protocol:register_heuristic("udp", heuristic_checker_udp)
 bc_protocol:register_heuristic("tcp", heuristic_checker_tcp)

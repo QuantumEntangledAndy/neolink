@@ -68,7 +68,7 @@ impl BcCamera {
             Ok(())
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not accept the PtzControl xml",
             })
         }
@@ -114,7 +114,7 @@ impl BcCamera {
             Ok(ptz_preset)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not return a valid PtzPreset xml",
             })
         }
@@ -173,7 +173,7 @@ impl BcCamera {
             Ok(())
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not accept the PtzPreset xml",
             })
         }
@@ -230,7 +230,7 @@ impl BcCamera {
             Ok(())
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not accept the PtzPreset xml",
             })
         }
@@ -284,7 +284,7 @@ impl BcCamera {
             Ok(())
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "The camera did not accept the StartZoomFocus xml",
             })
         }
@@ -335,7 +335,7 @@ impl BcCamera {
             Ok(xml)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Expected PtzZoomFocus xml but it was not recieved",
             })
         }

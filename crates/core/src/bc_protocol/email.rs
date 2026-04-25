@@ -44,7 +44,7 @@ impl BcCamera {
             Ok(email)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Expected Email xml but it was not recieved",
             })
         }
@@ -162,7 +162,7 @@ impl BcCamera {
             Ok(email_task)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Expected EmailTask xml but it was not recieved",
             })
         }

@@ -13,6 +13,13 @@ pub enum BcMedia {
     Aac(BcMediaAac),
     /// Holds ADPCM audio
     Adpcm(BcMediaAdpcm),
+    /// Raw container data (e.g. MP4) from replay; receive-only, not BcMedia-framed.
+    RawReplayChunk(Vec<u8>),
+    /// Replay stream started with this message ID (5, 8, or 0x17d). Receive-only; consumer uses it to
+    /// skip the first 32 bytes only when msg_id == 5 (app parity per BCMEDIA_REPLAY_FORMAT §5).
+    ReplayStarted(u16),
+    /// Replay/download stream ended normally (camera sent response 300 or 331). Receive-only sentinel.
+    StreamEnd,
 }
 //
 pub(super) const MAGIC_HEADER_BCMEDIA_INFO_V1: u32 = 0x31303031;
@@ -108,7 +115,7 @@ pub(super) const MAGIC_HEADER_BCMEDIA_IFRAME: u32 = 0x63643030;
 pub(super) const MAGIC_HEADER_BCMEDIA_IFRAME_LAST: u32 = 0x63643039;
 
 /// Video Types for I/PFrame
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoType {
     /// H264 video data
     H264,

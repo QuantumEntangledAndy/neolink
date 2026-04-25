@@ -336,6 +336,46 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
 
+  dev_release:
+    name: Dev Pre-release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/feature/disk-subcommand' && github.event_name == 'push'
+    permissions:
+      contents: write
+    needs:
+      - "cross"
+      - "native"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Prepare zips
+        run: |
+          cd artifacts
+          for d in */; do
+            chmod +x "${d}/neolink"* 2>/dev/null || true
+            zip -r "../${d%/}.zip" "${d}"
+          done
+          cd ..
+      - name: Publish rolling pre-release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: dev-feature-disk-subcommand
+          name: "Dev build: feature/disk-subcommand"
+          body: |
+            Automated build from the `feature/disk-subcommand` branch (commit ${{ github.sha }}).
+            Includes disk management, SD card replay/download, alarm search, and Argus 2 fix.
+
+            **This is a test build — not for production use.**
+
+            Download the zip for your platform, extract, and run `neolink`.
+          draft: false
+          prerelease: true
+          files: "*.zip"
+
   create_release:
     name: Create Release
     runs-on: ubuntu-latest

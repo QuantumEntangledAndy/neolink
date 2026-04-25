@@ -8,6 +8,33 @@ type IResult<I, O, E = nom::error::VerboseError<I>> = Result<(I, O), nom::Err<E>
 // PAD_SIZE: Media packets use 8 byte padding
 const PAD_SIZE: u32 = 8;
 
+/// Returns the byte offset (>= 8) of the next BcMedia frame magic in `buf`, or None if none found.
+/// Only considers 8-byte-aligned positions to avoid false positives (the magic can appear inside H.264 payload).
+/// Used by the codec to resync after a parse error instead of discarding the rest of the stream.
+pub(crate) fn find_next_bcmedia_magic(buf: &[u8]) -> Option<usize> {
+    fn is_magic(u: u32) -> bool {
+        matches!(
+            u,
+            MAGIC_HEADER_BCMEDIA_INFO_V1
+                | MAGIC_HEADER_BCMEDIA_INFO_V2
+                | MAGIC_HEADER_BCMEDIA_IFRAME..=MAGIC_HEADER_BCMEDIA_IFRAME_LAST
+                | MAGIC_HEADER_BCMEDIA_PFRAME..=MAGIC_HEADER_BCMEDIA_PFRAME_LAST
+                | MAGIC_HEADER_BCMEDIA_AAC
+                | MAGIC_HEADER_BCMEDIA_ADPCM
+        )
+    }
+    // BcMedia frames are 8-byte padded; only resync at 8-byte boundaries to avoid landing in the middle of NAL data
+    let mut i = 8;
+    while i + 4 <= buf.len() {
+        let word = u32::from_le_bytes([buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]);
+        if is_magic(word) {
+            return Some(i);
+        }
+        i += 8;
+    }
+    None
+}
+
 impl BcMedia {
     pub(crate) fn deserialize(buf: &mut BytesMut) -> Result<BcMedia, Error> {
         let (result, len) = match consumed(bcmedia)(buf) {

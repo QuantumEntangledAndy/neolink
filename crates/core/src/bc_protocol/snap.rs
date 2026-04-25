@@ -92,7 +92,7 @@ impl BcCamera {
                     result.extend_from_slice(&data);
                 } else {
                     return Err(Error::UnintelligibleReply {
-                        reply: std::sync::Arc::new(Box::new(msg)),
+                        _reply: std::sync::Arc::new(Box::new(msg)),
                         why: "Expected binary data but got something else",
                     });
                 }
@@ -129,7 +129,7 @@ impl BcCamera {
                     }
                 } else {
                     return Err(Error::UnintelligibleReply {
-                        reply: std::sync::Arc::new(Box::new(msg)),
+                        _reply: std::sync::Arc::new(Box::new(msg)),
                         why: "Expected binary data but got something else",
                     });
                 }
@@ -152,7 +152,7 @@ impl BcCamera {
             Ok(result)
         } else {
             Err(Error::UnintelligibleReply {
-                reply: std::sync::Arc::new(Box::new(msg)),
+                _reply: std::sync::Arc::new(Box::new(msg)),
                 why: "Expected Snap xml but it was not recieved",
             })
         }

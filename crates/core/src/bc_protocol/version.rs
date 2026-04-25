@@ -46,7 +46,7 @@ impl BcCamera {
             }
             _ => {
                 return Err(Error::UnintelligibleReply {
-                    reply: std::sync::Arc::new(Box::new(modern_reply)),
+                    _reply: std::sync::Arc::new(Box::new(modern_reply)),
                     why: "Expected a VersionInfo message",
                 })
             }

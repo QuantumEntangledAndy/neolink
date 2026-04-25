@@ -63,7 +63,7 @@ impl BcCamera {
                     return Ok(pirstate);
                 } else {
                     return Err(Error::UnintelligibleReply {
-                        reply: std::sync::Arc::new(Box::new(msg)),
+                        _reply: std::sync::Arc::new(Box::new(msg)),
                         why: "Expected PirSate xml but it was not recieved",
                     });
                 }
@@ -120,7 +120,7 @@ impl BcCamera {
                 Ok(())
             } else {
                 Err(Error::UnintelligibleReply {
-                    reply: std::sync::Arc::new(Box::new(msg)),
+                    _reply: std::sync::Arc::new(Box::new(msg)),
                     why: "The camera did not except the RfAlarmCfg xml",
                 })
             }

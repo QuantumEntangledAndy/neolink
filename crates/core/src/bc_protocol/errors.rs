@@ -27,19 +27,21 @@ pub enum Error {
     TimeTryFrom(#[from] time::error::TryFromParsed),
 
     /// Raised when a Bc reply was not understood
-    #[error("Communication error")]
+    #[error("Communication error: {why}")]
     UnintelligibleReply {
-        /// The Bc packet that was not understood
-        reply: std::sync::Arc<Box<Bc>>,
+        /// The Bc packet that was not understood (use .unintelligible_reply() or match _reply)
+        #[allow(dead_code)]
+        _reply: std::sync::Arc<Box<Bc>>,
         /// The message attached to the error
         why: &'static str,
     },
 
     /// Raised when a BcXml reply was not understood
-    #[error("Communication error")]
+    #[error("Communication error: {why}")]
     UnintelligibleXml {
         /// The Bc packet that was not understood
-        reply: std::sync::Arc<Box<BcXml>>,
+        #[allow(dead_code)]
+        _reply: std::sync::Arc<Box<BcXml>>,
         /// The message attached to the error
         why: &'static str,
     },
@@ -156,6 +158,15 @@ pub enum Error {
     SimultaneousSubscriptionId {
         /// The message number that was subscribed to
         msg_id: u32,
+    },
+
+    /// Raised when an invalid argument is passed to a command
+    #[error("Invalid argument {argument}: {value}")]
+    InvalidArgument {
+        /// Argument name
+        argument: String,
+        /// Description of the problem
+        value: String,
     },
 
     /// Raised when a new encyrption byte is observed
