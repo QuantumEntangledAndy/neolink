@@ -22,6 +22,7 @@ use neolink_core::bc_protocol::MotionStatus;
 pub(crate) enum MdState {
     Start(Instant),
     Stop(Instant),
+    Doorbell(Instant),
     Unknown,
 }
 
@@ -85,6 +86,11 @@ impl NeoCamMdThread {
                                     MotionStatus::Stop(at) => {
                                         watcher.send_replace(
                                             MdState::Stop(at.into())
+                                        );
+                                    }
+                                    MotionStatus::Doorbell(at) => {
+                                        watcher.send_replace(
+                                            MdState::Doorbell(at.into())
                                         );
                                     }
                                     MotionStatus::NoChange(_) => {},

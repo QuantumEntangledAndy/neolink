@@ -220,7 +220,7 @@ pub(crate) struct CameraConfig {
     pub(crate) idle_disconnect: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, Validate, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Serialize, Clone, Validate, PartialEq, Eq, Hash)]
 pub(crate) struct UserConfig {
     #[validate(custom(function = "validate_username"))]
     #[serde(alias = "username")]
@@ -234,6 +234,8 @@ pub(crate) struct UserConfig {
 pub(crate) struct MqttConfig {
     #[serde(default = "default_true")]
     pub(crate) enable_motion: bool,
+    #[serde(default = "default_true")]
+    pub(crate) enable_doorbell: bool,
     #[serde(default = "default_true")]
     pub(crate) enable_light: bool,
     #[serde(default = "default_true")]
@@ -303,6 +305,7 @@ const fn default_false() -> bool {
 fn default_mqtt() -> MqttConfig {
     MqttConfig {
         enable_motion: true,
+        enable_doorbell: true,
         enable_light: true,
         enable_battery: true,
         battery_update: 2000,

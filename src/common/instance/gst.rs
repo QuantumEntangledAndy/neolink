@@ -45,7 +45,7 @@ impl NeoInstance {
                         log::info!("{name}::{stream:?}: Starting with Motion");
                         counter.create_activated().await?
                     }
-                    MdState::Stop(_) | MdState::Unknown => {
+                    MdState::Stop(_) | MdState::Doorbell(_) | MdState::Unknown => {
                         log::info!("{name}::{stream:?}: Waiting with Motion");
                         counter.create_deactivated().await?
                     }
@@ -64,7 +64,7 @@ impl NeoInstance {
                                         log::info!("{thread_name}::{stream:?}: Motion Started");
                                         md_permit.activate().await?;
                                     }
-                                    MdState::Stop(_) => {
+                                    MdState::Stop(_) | MdState::Doorbell(_) => {
                                         log::info!("{thread_name}::{stream:?}: Motion Stopped");
                                         md_permit.deactivate().await?;
                                     }

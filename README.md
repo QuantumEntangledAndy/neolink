@@ -243,6 +243,9 @@ Status Messages:
   pir status
 - `/status/motion` Contains the motion detection alarm status. `on` for motion
   and `off` for still, only published when `enable_moton` is true in the config
+- `/status/doorbell` Contains the doorbell button status. `pressed` when doorbell 
+  is pressed, `idle` otherwise. Only published when `enable_doorbell` is true 
+  in the config (default: true)
 - `/status/ptz/preset` Sent in reply to a `/query/ptz/preset` an XML encoded
   version of the PTZ presets
 - `/status/preview` a base64 encoded camera image updated every 2s. Not
@@ -325,6 +328,8 @@ enable_motion = false        # motion detection
                              # (limited battery drain since it
                              # is a passive listening connection)
                              #
+enable_doorbell = false      # doorbell button events
+                             #
 enable_light = false         # flood lights only available on some camera
                              # (limited battery drain since it
                              # is a passive listening connection)
@@ -368,6 +373,7 @@ Available features are:
 - `ir`: This adds a selection switch to chage the IR light on/off/auto to home
   assistant
 - `motion`: This adds a motion detection binary sensor to home assistant
+- `doorbell`: This adds a doorbell binary sensor to home assistant
 - `reboot`: This adds a reboot button to home assistant
 - `pt`: This adds a selection of buttons to control the pan and tilt of the
   camera

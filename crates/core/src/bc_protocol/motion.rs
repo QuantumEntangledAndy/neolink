@@ -12,6 +12,8 @@ pub enum MotionStatus {
     Start(Instant),
     /// Sent when motion stops
     Stop(Instant),
+    /// Sent when doorbell is pressed
+    Doorbell(Instant),
     /// Sent when an Alarm about something other than motion was received
     NoChange(Instant),
 }
@@ -37,6 +39,7 @@ impl MotionData {
             MotionStatus::Start(_) => Some(true),
             MotionStatus::Stop(_) => Some(false),
             MotionStatus::NoChange(_) => None,
+            MotionStatus::Doorbell(_) => None,
         })
     }
 
@@ -50,6 +53,7 @@ impl MotionData {
             MotionStatus::Start(_) => Some(true),
             MotionStatus::Stop(time) => Some((Instant::now() - *time) < duration),
             MotionStatus::NoChange(_) => None,
+            MotionStatus::Doorbell(_) => None,
         })
     }
 
@@ -236,25 +240,33 @@ impl BcCamera {
                                     ..
                                 }) = motion_msg.body
                                 {
-                                    let mut result = MotionStatus::NoChange(Instant::now());
+                                    let mut events = Vec::new();
                                     for alarm_event in &alarm_event_list.alarm_events {
                                         if alarm_event.channel_id == channel_id {
-                                            if alarm_event.status != "none"
-                                                || alarm_event
-                                                    .ai_type
-                                                    .as_ref()
-                                                    .map(|ai_type| ai_type != "none")
-                                                    .unwrap_or(false)
-                                            {
-                                                result = MotionStatus::Start(Instant::now());
-                                                break;
-                                            } else {
-                                                result = MotionStatus::Stop(Instant::now());
-                                                break;
+                                            let statuses: Vec<&str> = alarm_event.status.split(',').collect();
+                                            for status in statuses {
+                                                let event = match status {
+                                                    "visitor" => MotionStatus::Doorbell(Instant::now()),
+                                                    "MD" | "PIR" => MotionStatus::Start(Instant::now()),
+                                                    "none" => MotionStatus::Stop(Instant::now()),
+                                                    _ => MotionStatus::Start(Instant::now()),
+                                                };
+                                                events.push(event);
                                             }
+                                            if alarm_event.ai_type.as_ref().map(|t| t != "none").unwrap_or(false) {
+                                                if !events.iter().any(|e| matches!(e, MotionStatus::Start(_))) {
+                                                    events.push(MotionStatus::Start(Instant::now()));
+                                                }
+                                            }
+                                            break;
                                         }
                                     }
-                                    Ok(result)
+                                    for event in events {
+                                        if tx.send(Ok(event)).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Ok(MotionStatus::NoChange(Instant::now()))
                                 } else {
                                     Ok(MotionStatus::NoChange(Instant::now()))
                                 }

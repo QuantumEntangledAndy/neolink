@@ -30,6 +30,8 @@ pub(crate) enum Discoveries {
     Battery,
     #[serde(alias = "siren", alias = "alarm")]
     Siren,
+    #[serde(alias = "doorbell", alias = "db", alias = "visitor")]
+    Doorbell,
 }
 
 #[derive(Debug, Clone)]
@@ -620,6 +622,36 @@ pub(crate) async fn enable_discovery(
                 .with_context(|| {
                     format!(
                         "Failed to publish sire auto-discover data on over MQTT for {}",
+                        cam_config.name
+                    )
+                })?;
+            }
+            Discoveries::Doorbell => {
+                let config_data = DiscoveryBinarySensor {
+                    device: device.clone(),
+                    availability: availability.clone(),
+                    name: format!("{} Doorbell", friendly_name.as_str()),
+                    unique_id: format!("neolink_{}_doorbell", cam_config.name),
+                    icon: Some("mdi:doorbell".to_string()),
+                    state_topic: format!("neolink/{}/status/doorbell", cam_config.name),
+                    payload_off: "idle".to_string(),
+                    payload_on: "pressed".to_string(),
+                };
+
+                mqtt.send_message_with_root_topic(
+                    &format!(
+                        "{}/binary_sensor/{}",
+                        discovery_config.topic, &config_data.unique_id
+                    ),
+                    "config",
+                    &serde_json::to_string(&config_data)
+                        .with_context(|| "Could not serialise discovery doorbell config into json")?,
+                    true,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to publish doorbell auto-discover data over MQTT for {}",
                         cam_config.name
                     )
                 })?;

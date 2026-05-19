@@ -313,6 +313,13 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                     .with_context(|| format!("Failed to publish push notification unknown for {}", camera_name))?;
                 let _drop_message2 = mqtt_instance.last_will("status/motion", "unknown").await?;
 
+                // Publish initial doorbell state
+                mqtt_instance
+                    .send_message("status/doorbell", "unknown", true)
+                    .await
+                    .with_context(|| format!("Failed to publish doorbell unknown for {}", camera_name))?;
+                let _drop_message3 = mqtt_instance.last_will("status/doorbell", "unknown").await?;
+
                 if let Some(discovery_config) = config.discovery.as_ref() {
                     enable_discovery(discovery_config, &mqtt_instance, &camera).await?;
                 }
@@ -330,6 +337,9 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
 
                 let camera_motion = camera.clone();
                 let mqtt_motion = mqtt_instance.resubscribe().await?;
+
+                let camera_doorbell = camera.clone();
+                let mqtt_doorbell = mqtt_instance.resubscribe().await?;
 
                 #[cfg(feature = "pushnoti")]
                 let camera_pn = camera.clone();
@@ -476,6 +486,26 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                             }?;
                         }
                     }, if config.enable_motion => v,
+                    // Handle the doorbell messages
+                    v = async {
+                        let mut db = camera_doorbell.doorbell().await?;
+                        loop {
+                            db.wait_for(|state| matches!(state, MdState::Doorbell(_))).await.with_context(|| {
+                                format!("{}: Doorbell Watch Dropped", camera_name)
+                            })?;
+                            mqtt_doorbell.send_message("status/doorbell", "pressed", true).await.with_context(|| {
+                                format!("{}: Failed to publish doorbell pressed", camera_name)
+                            })?;
+                            // Wait for non-doorbell state to reset
+                            db.wait_for(|state| !matches!(state, MdState::Doorbell(_))).await.with_context(|| {
+                                format!("{}: Doorbell Reset Watch Dropped", camera_name)
+                            })?;
+                            mqtt_doorbell.send_message("status/doorbell", "idle", true).await.with_context(|| {
+                                format!("{}: Failed to publish doorbell idle", camera_name)
+                            })?;
+                        }
+                        AnyResult::Ok(())
+                    }, if config.enable_doorbell => v,
                     // Handle the SNAP (image preview)
                     v = async {
                         let mut wait = IntervalStream::new({

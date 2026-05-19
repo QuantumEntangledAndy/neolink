@@ -238,6 +238,14 @@ impl NeoInstance {
         Ok(instance_rx.await?)
     }
 
+    pub(crate) async fn doorbell(&self) -> Result<WatchReceiver<MdState>> {
+        let (instance_tx, instance_rx) = oneshot();
+        self.camera_control
+            .send(NeoCamCommand::Doorbell(instance_tx))
+            .await?;
+        Ok(instance_rx.await?)
+    }
+
     pub(crate) async fn config(&self) -> Result<WatchReceiver<CameraConfig>> {
         let (instance_tx, instance_rx) = oneshot();
         self.camera_control

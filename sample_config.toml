@@ -45,6 +45,13 @@ address = "192.168.1.187:9000"
 # mqtt.discovery.topic = "homeassistant" # Uncomment to enable
 # If using discovery, _ characters are replaced with spaces in the name and title case is applied
 # mqtt.discovery.features = ["floodlight"] # Uncomment if this camera has a spotlight/floodlight
+# MQTT specific camera settings
+# mqtt.enable_motion = true
+# mqtt.enable_doorbell = true
+# mqtt.enable_light = true
+# mqtt.enable_battery = true
+# mqtt.enable_preview = true
+# mqtt.enable_floodlight = true
 
 # If you use a battery camera: **Instead** of an `address` supply the uid
 # as follows

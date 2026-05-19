@@ -33,6 +33,7 @@ pub(crate) enum NeoCamCommand {
     HangUp,
     Instance(OneshotSender<Result<NeoInstance>>),
     Motion(OneshotSender<WatchReceiver<MdState>>),
+    Doorbell(OneshotSender<WatchReceiver<MdState>>),
     Config(OneshotSender<WatchReceiver<CameraConfig>>),
     Disconnect(OneshotSender<()>),
     Connect(OneshotSender<()>),
@@ -108,6 +109,13 @@ impl NeoCam {
                                 let _ = result.send(instance);
                             }
                             NeoCamCommand::Motion(sender) => {
+                                md_request_tx.send(
+                                    MdRequest::Get {
+                                        sender,
+                                    }
+                                ).await?;
+                            },
+                            NeoCamCommand::Doorbell(sender) => {
                                 md_request_tx.send(
                                     MdRequest::Get {
                                         sender,
