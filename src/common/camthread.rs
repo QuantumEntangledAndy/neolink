@@ -194,7 +194,11 @@ impl Drop for NeoCamThread {
     }
 }
 
-async fn update_camera_time(camera: &BcCamera, name: &str, update_time: bool) -> AnyResult<()> {
+async fn update_camera_time(
+    camera: &BcCamera,
+    name: &str,
+    update_time: bool,
+) -> AnyResult<()> {
     let cam_time = camera.get_time().await?;
     let mut update = false;
     if let Some(time) = cam_time {
@@ -207,11 +211,21 @@ async fn update_camera_time(camera: &BcCamera, name: &str, update_time: bool) ->
         log::warn!("{}: Camera has no time set, Updating", name);
     }
     if update {
-        use std::time::SystemTime;
-        let new_time = SystemTime::now();
+        use time::{OffsetDateTime, UtcOffset};
 
-        log::info!("{}: Setting time to {:?}", name, new_time);
-        match camera.set_time(new_time.into()).await {
+        let utc_now = OffsetDateTime::now_utc();
+        let offset = UtcOffset::local_offset_at(utc_now).unwrap_or(UtcOffset::UTC);
+        let local = utc_now.to_offset(offset);
+        log::info!(
+            "{}: Setting camera time to local time: {} {}",
+            name,
+            local,
+            offset
+        );
+        // Strip the offset so the camera stores wall-clock local time as-is
+        let new_time = local.replace_offset(UtcOffset::UTC);
+
+        match camera.set_time(new_time).await {
             Ok(_) => {
                 let cam_time = camera.get_time().await?;
                 if let Some(time) = cam_time {
