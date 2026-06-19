@@ -603,9 +603,10 @@ pub struct DuplexList {
 /// audioStreamModeList xml
 #[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize)]
 pub struct AudioStreamModeList {
-    /// The supported audio stream mode
-    #[serde(rename = "audioStreamMode")]
-    pub audio_stream_mode: String,
+    /// The supported audio stream mode(s). Some devices (e.g. the Reolink
+    /// Video Doorbell) advertise more than one, so this must be a list.
+    #[serde(default, rename = "audioStreamMode")]
+    pub audio_stream_mode: Vec<String>,
 }
 
 /// audioConfigList xml
