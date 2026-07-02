@@ -1,4 +1,5 @@
 use crate::bc;
+use crate::bc::model::{Bc, BcBody, BcMeta, ModernMsg, MSG_ID_PING};
 use futures::stream::StreamExt;
 use log::*;
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::{
     collections::HashMap,
     sync::atomic::{AtomicBool, AtomicU16, Ordering},
+    time::Duration,
 };
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -330,13 +332,13 @@ impl BcCamera {
         let username: String = options.credentials.username.clone();
         let passwd: Option<String> = options.credentials.password.clone();
 
-        let (sink, source): (BcConnSink, BcConnSource) = {
+        let (sink, source, is_udp): (BcConnSink, BcConnSource, bool) = {
             match BcCamera::find_camera(options).await? {
                 CameraLocation::Tcp(addr) => {
                     let (x, r) = TcpSource::new(addr, &username, passwd.as_ref(), options.debug)
                         .await?
                         .split();
-                    (Box::new(x), Box::new(r))
+                    (Box::new(x), Box::new(r), false)
                 }
                 CameraLocation::Udp(discovery) => {
                     let (x, r) = UdpSource::new_from_discovery(
@@ -347,7 +349,7 @@ impl BcCamera {
                     )
                     .await?
                     .split();
-                    (Box::new(x), Box::new(r))
+                    (Box::new(x), Box::new(r), true)
                 }
             }
         };
@@ -365,6 +367,45 @@ impl BcCamera {
             cancel: CancellationToken::new(),
         };
         me.keepalive().await?;
+
+        // UDP sessions are kept alive by the camera itself: it sends
+        // MSG_ID_UDP_KEEP_ALIVE, which we acknowledge in `keepalive()` above.
+        // TCP has no equivalent — nothing flows during idle periods — so the
+        // camera eventually times the Baichuan session out and we have to
+        // reconnect (a visible blip every few minutes for downstream consumers).
+        // Keep the session warm by sending a periodic MSG_ID_PING ourselves.
+        // The ping is fire-and-forget; any reply is ignored.
+        if !is_udp {
+            let connection = me.connection.clone();
+            let channel_id = me.channel_id;
+            let mut msg_num = me.new_message_num();
+            tokio::spawn(async move {
+                // Comfortably under the camera's idle-session timeout.
+                let mut tick = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    tick.tick().await;
+                    let ping = Bc {
+                        meta: BcMeta {
+                            msg_id: MSG_ID_PING,
+                            channel_id,
+                            msg_num,
+                            stream_type: 0,
+                            response_code: 0,
+                            class: 0x6414,
+                        },
+                        body: BcBody::ModernMsg(ModernMsg {
+                            ..Default::default()
+                        }),
+                    };
+                    msg_num = msg_num.wrapping_add(1);
+                    // A send error means the connection is gone; stop pinging.
+                    if connection.send(ping).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+
         Ok(me)
     }
 
