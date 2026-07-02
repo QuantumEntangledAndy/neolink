@@ -108,7 +108,7 @@ impl BcConnection {
         })
     }
 
-    pub(super) async fn send(&self, bc: Bc) -> crate::Result<()> {
+    pub(crate) async fn send(&self, bc: Bc) -> crate::Result<()> {
         self.sink.send(Ok(bc)).await?;
         Ok(())
     }
