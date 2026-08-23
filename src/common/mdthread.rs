@@ -23,6 +23,8 @@ pub(crate) enum MdState {
     Start(Instant),
     Stop(Instant),
     Unknown,
+    /// Doorbell button pressed (AlarmEvent status "visitor")
+    Visitor(Instant),
 }
 
 pub(crate) struct NeoCamMdThread {
@@ -88,6 +90,11 @@ impl NeoCamMdThread {
                                         );
                                     }
                                     MotionStatus::NoChange(_) => {},
+                                    MotionStatus::Visitor(at) => {
+                                        watcher.send_replace(
+                                            MdState::Visitor(at.into())
+                                        );
+                                    }
                                 }
                             }
                         }
