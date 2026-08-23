@@ -14,6 +14,8 @@ pub enum MotionStatus {
     Stop(Instant),
     /// Sent when an Alarm about something other than motion was received
     NoChange(Instant),
+    /// Sent when a doorbell button is pressed (AlarmEvent status "visitor")
+    Visitor(Instant),
 }
 
 /// A handle on current motion related events comming from the camera
@@ -37,6 +39,7 @@ impl MotionData {
             MotionStatus::Start(_) => Some(true),
             MotionStatus::Stop(_) => Some(false),
             MotionStatus::NoChange(_) => None,
+            MotionStatus::Visitor(_) => Some(true),
         })
     }
 
@@ -50,6 +53,7 @@ impl MotionData {
             MotionStatus::Start(_) => Some(true),
             MotionStatus::Stop(time) => Some((Instant::now() - *time) < duration),
             MotionStatus::NoChange(_) => None,
+            MotionStatus::Visitor(_) => Some(true),
         })
     }
 
@@ -239,6 +243,25 @@ impl BcCamera {
                                     let mut result = MotionStatus::NoChange(Instant::now());
                                     for alarm_event in &alarm_event_list.alarm_events {
                                         if alarm_event.channel_id == channel_id {
+                                            // Surface the AI classification (people/vehicle/visitor/...)
+                                            // — doorbell button presses are expected to arrive as
+                                            // AItype "visitor" on Baichuan, same as Reolink's HTTP API.
+                                            if let Some(ai_type) =
+                                                alarm_event.ai_type.as_ref().filter(|t| *t != "none")
+                                            {
+                                                log::debug!(
+                                                    "AlarmEvent ai_type={} status={}",
+                                                    ai_type,
+                                                    alarm_event.status
+                                                );
+                                            }
+                                            // Doorbell button press: the camera reports it as
+                                            // AlarmEvent status "visitor" over Baichuan (verified
+                                            // on Battery Video Doorbell 2nd Gen fw v3.0.0.6304).
+                                            if alarm_event.status == "visitor" {
+                                                result = MotionStatus::Visitor(Instant::now());
+                                                break;
+                                            }
                                             if alarm_event.status != "none"
                                                 || alarm_event
                                                     .ai_type

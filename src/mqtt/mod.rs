@@ -330,6 +330,8 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
 
                 let camera_motion = camera.clone();
                 let mqtt_motion = mqtt_instance.resubscribe().await?;
+                let camera_visitor = camera.clone();
+                let mqtt_visitor = mqtt_instance.resubscribe().await?;
 
                 #[cfg(feature = "pushnoti")]
                 let camera_pn = camera.clone();
@@ -465,6 +467,36 @@ async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> R
                                 })?;
                                 mqtt_motion.send_message("status/motion", "off", true).await.with_context(|| {
                                     format!("{}: Failed to publish motion stop", camera_name)
+                                })?;
+                                AnyResult::Ok(())
+                            }.await;
+                            match v.map_err(|e| e.downcast::<neolink_core::Error>()) {
+                                Err(Ok(neolink_core::Error::UnintelligibleReply{..})) => futures::future::pending().await,
+                                Ok(()) => AnyResult::Ok(()),
+                                Err(Ok(e)) => Err(e.into()),
+                                Err(Err(e)) => Err(e),
+                            }?;
+                        }
+                    }, if config.enable_motion => v,
+                    // Handle doorbell visitor (button press) events. The camera reports a
+                    // press as AlarmEvent status "visitor" over Baichuan; publish it as a
+                    // momentary on/off so HA/MQTT consumers can ring on it. Gated on
+                    // enable_motion (same Baichuan alarm subscription).
+                    v = async {
+                        let mut md = camera_visitor.motion().await?;
+                        loop {
+                            let v = async {
+                                md.wait_for(|state| matches!(state, MdState::Visitor(_))).await.with_context(|| {
+                                    format!("{}: Visitor Watch Dropped", camera_name)
+                                })?;
+                                mqtt_visitor.send_message("status/visitor", "on", true).await.with_context(|| {
+                                    format!("{}: Failed to publish visitor press", camera_name)
+                                })?;
+                                md.wait_for(|state| !matches!(state, MdState::Visitor(_))).await.with_context(|| {
+                                    format!("{}: Visitor-clear Watch Dropped", camera_name)
+                                })?;
+                                mqtt_visitor.send_message("status/visitor", "off", true).await.with_context(|| {
+                                    format!("{}: Failed to publish visitor clear", camera_name)
                                 })?;
                                 AnyResult::Ok(())
                             }.await;

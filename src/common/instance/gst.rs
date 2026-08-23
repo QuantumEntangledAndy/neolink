@@ -41,7 +41,7 @@ impl NeoInstance {
             let mut md_permit = {
                 let md_state = md.borrow_and_update().clone();
                 match md_state {
-                    MdState::Start(_) => {
+                    MdState::Start(_) | MdState::Visitor(_) => {
                         log::info!("{name}::{stream:?}: Starting with Motion");
                         counter.create_activated().await?
                     }
@@ -69,6 +69,11 @@ impl NeoInstance {
                                         md_permit.deactivate().await?;
                                     }
                                     MdState::Unknown => {}
+                                    // A doorbell press counts as activity: wake the stream.
+                                    MdState::Visitor(_) => {
+                                        log::info!("{thread_name}::{stream:?}: Visitor press");
+                                        md_permit.activate().await?;
+                                    }
                                 }
                             }
                             Err(e) => {
