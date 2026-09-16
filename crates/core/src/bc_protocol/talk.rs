@@ -333,6 +333,14 @@ impl BcCamera {
 
         let target_chunks = full_block_size as usize * BLOCK_PER_PAYLOAD;
 
+        /// Blocks that may be sent before their acks are back (1 s at 64 ms)
+        const MAX_UNACKED: usize = 16;
+        /// How far ahead of real time the sent audio may run
+        const MAX_AHEAD: std::time::Duration = std::time::Duration::from_millis(500);
+        let mut unacked: usize = 0;
+        let mut schedule_start: Option<std::time::Instant> = None;
+        let mut sent_audio = std::time::Duration::ZERO;
+
         let mut end_of_stream = false;
         let mut expected_stream_end = std::time::Instant::now();
         while !end_of_stream {
@@ -396,15 +404,52 @@ impl BcCamera {
                 }),
             };
 
+            let play_length = std::time::Duration::from_secs_f32(play_length);
+
+            // Pace against the wall clock, not the camera's acks. The camera
+            // acks a 64 ms block only after ~100 ms (Reolink Video Doorbell
+            // WiFi, measured 2026-09-14: median 99 ms, p90 171 ms, network RTT
+            // 27 ms), so send-then-wait-for-ack ran at 59 % of real time: the
+            // backlog grew 0.4 s per second of speech and the camera played
+            // every block with a gap after it. Blocks may run at most
+            // MAX_AHEAD ahead of real time (an initial backlog is squeezed out
+            // as one short burst) and at most MAX_UNACKED blocks may be in
+            // flight, so a camera that really stops acking still throttles us.
+            if let Some(start) = schedule_start {
+                let ahead =
+                    (start + sent_audio).saturating_duration_since(std::time::Instant::now());
+                if ahead > MAX_AHEAD {
+                    tokio::time::sleep(ahead - MAX_AHEAD).await;
+                }
+            } else {
+                schedule_start = Some(std::time::Instant::now());
+            }
+
             let time_sent = std::time::Instant::now();
             sub.send(msg).await?;
-            let play_length = std::time::Duration::from_secs_f32(play_length);
+            unacked += 1;
+            sent_audio += play_length;
             if time_sent > expected_stream_end {
                 expected_stream_end = time_sent + play_length;
             } else {
                 expected_stream_end += play_length;
             }
-            let _ = sub.recv().await?;
+
+            // Take the acks that have already arrived without waiting for
+            // them; wait only when the in-flight window is full.
+            while unacked > 0 {
+                match tokio::time::timeout(std::time::Duration::ZERO, sub.recv()).await {
+                    Ok(reply) => {
+                        reply?;
+                        unacked -= 1;
+                    }
+                    Err(_) => break,
+                }
+            }
+            while unacked >= MAX_UNACKED {
+                sub.recv().await?;
+                unacked -= 1;
+            }
         }
 
         // Chunks are still being played, while talk_stop will interrupt them. Wait until we expect
