@@ -243,8 +243,8 @@ pub(super) async fn make_factory(
                         // Run blocking code on a seperate thread
                         // This is not an async thread
                         std::thread::spawn(move || {
-                            let mut aud_ts = 0u32;
-                            let mut vid_ts = 0u32;
+                            let mut aud_ts = 0u64;
+                            let mut vid_ts = 0u64;
                             let mut pools = Default::default();
 
                             log::trace!("{name}::{stream}: Sending buffered frames");
@@ -304,8 +304,8 @@ fn send_to_sources(
     pools: &mut HashMap<usize, gstreamer::BufferPool>,
     vid_src: &Option<AppSrc>,
     aud_src: &Option<AppSrc>,
-    vid_ts: &mut u32,
-    aud_ts: &mut u32,
+    vid_ts: &mut u64,
+    aud_ts: &mut u64,
     stream_config: &StreamConfig,
 ) -> AnyResult<()> {
     // Update TS
@@ -313,39 +313,29 @@ fn send_to_sources(
         BcMedia::Aac(aac) => {
             let duration = aac.duration().expect("Could not calculate AAC duration");
             if let Some(aud_src) = aud_src.as_ref() {
-                log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    aac.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts));
+                send_to_appsrc(aud_src, aac.data, Duration::from_micros(*aud_ts), pools)?;
             }
-            *aud_ts += duration;
+            *aud_ts += u64::from(duration);
         }
         BcMedia::Adpcm(adpcm) => {
             let duration = adpcm
                 .duration()
                 .expect("Could not calculate ADPCM duration");
             if let Some(aud_src) = aud_src.as_ref() {
-                log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    adpcm.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts));
+                send_to_appsrc(aud_src, adpcm.data, Duration::from_micros(*aud_ts), pools)?;
             }
-            *aud_ts += duration;
+            *aud_ts += u64::from(duration);
         }
         BcMedia::Iframe(BcMediaIframe { data, .. })
         | BcMedia::Pframe(BcMediaPframe { data, .. }) => {
             if let Some(vid_src) = vid_src.as_ref() {
-                log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts as u64));
-                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts as u64), pools)?;
+                log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts));
+                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts), pools)?;
             }
-            const MICROSECONDS: u32 = 1000000;
-            *vid_ts += MICROSECONDS / stream_config.fps;
+            const MICROSECONDS: u64 = 1000000;
+            *vid_ts += MICROSECONDS / u64::from(stream_config.fps);
         }
         _ => {}
     }
@@ -380,36 +370,7 @@ fn send_to_appsrc(
             return Ok(());
         }
     }
-    let buf = {
-        let msg_size = data.len();
-
-        // Get or create a pool of this len
-        let pool = pools.entry(msg_size).or_insert_with_key(|size| {
-            let pool = gstreamer::BufferPool::new();
-            let mut pool_config = pool.config();
-            // Set a max buffers to ensure we don't grow in memory endlessly
-            pool_config.set_params(None, (*size) as u32, 8, 32);
-            pool.set_config(pool_config).unwrap();
-            pool.set_active(true).unwrap();
-            pool
-        });
-
-        // Get a buffer from the pool and then copy in the data
-        let gst_buf = {
-            let mut new_buf = pool.acquire_buffer(None).unwrap();
-            let gst_buf_mut = new_buf.get_mut().unwrap();
-            let time = ClockTime::from_useconds(ts.as_micros() as u64);
-            gst_buf_mut.set_dts(time);
-            gst_buf_mut.set_pts(time);
-            let mut gst_buf_data = gst_buf_mut.map_writable().unwrap();
-            gst_buf_data.copy_from_slice(data.as_slice());
-            drop(gst_buf_data);
-            new_buf
-        };
-
-        // Return the new buffer with the data
-        gst_buf
-    };
+    let buf = frame_buffer(data, ts, pools)?;
 
     // Push buffer into the appsrc
     match appsrc.push_buffer(buf) {
@@ -444,6 +405,57 @@ fn send_to_appsrc(
     }
     Ok(())
 }
+
+fn frame_buffer(
+    data: Vec<u8>,
+    ts: Duration,
+    pools: &mut HashMap<usize, gstreamer::BufferPool>,
+) -> AnyResult<gstreamer::Buffer> {
+    const MAX_POOLED_FRAME: usize = 1024 * 1024;
+    if data.is_empty() || data.len() > MAX_POOLED_FRAME {
+        return timestamp_buffer(gstreamer::Buffer::from_mut_slice(data), ts);
+    }
+
+    // Each pool owns a socketpair. Bound the number of pools despite variable frame lengths.
+    let size = data.len().next_power_of_two().max(256);
+    let pool = match pools.entry(size) {
+        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            let pool = gstreamer::BufferPool::new();
+            let mut config = pool.config();
+            config.set_params(None, size as u32, 0, 32);
+            pool.set_config(config)
+                .context("Cannot configure frame pool")?;
+            pool.set_active(true)
+                .context("Cannot activate frame pool")?;
+            entry.insert(pool)
+        }
+    };
+    // Preroll can retain more frames than one bucket holds. Never block the camera receiver.
+    let params =
+        gstreamer::BufferPoolAcquireParams::with_flags(gstreamer::BufferPoolAcquireFlags::DONTWAIT);
+    let mut buffer = match pool.acquire_buffer(Some(&params)) {
+        Ok(buffer) => buffer,
+        Err(FlowError::Eos) => {
+            return timestamp_buffer(gstreamer::Buffer::from_mut_slice(data), ts);
+        }
+        Err(error) => return Err(error).context("Cannot acquire frame buffer"),
+    };
+    let writable = buffer.get_mut().context("Frame buffer is shared")?;
+    writable.map_writable().context("Cannot map frame buffer")?[..data.len()]
+        .copy_from_slice(&data);
+    writable.set_size(data.len());
+    timestamp_buffer(buffer, ts)
+}
+
+fn timestamp_buffer(mut buffer: gstreamer::Buffer, ts: Duration) -> AnyResult<gstreamer::Buffer> {
+    let writable = buffer.get_mut().context("Frame buffer is shared")?;
+    let time = ClockTime::from_useconds(ts.as_micros() as u64);
+    writable.set_dts(time);
+    writable.set_pts(time);
+    Ok(buffer)
+}
+
 fn check_live(app: &AppSrc) -> Result<()> {
     app.bus().ok_or(anyhow!("App source is closed"))?;
     app.pads()
@@ -960,4 +972,167 @@ fn make_queue(name: &str, buffer_size: u32) -> AnyResult<Element> {
 fn buffer_size(bitrate: u32) -> u32 {
     // 0.1 seconds (according to bitrate) or 4kb what ever is larger
     std::cmp::max(bitrate * 2 / 8u32, 4u32 * 1024u32)
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    use neolink_core::bcmedia::model::{BcMediaAac, BcMediaAdpcm};
+
+    fn stream_config() -> StreamConfig {
+        StreamConfig {
+            resolution: [2560, 1440],
+            bitrate: 4_000_000,
+            fps: 20,
+            bitrate_table: vec![],
+            fps_table: vec![],
+            vid_type: Some(VideoType::H264),
+            aud_type: None,
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn variable_frame_sizes_keep_file_descriptors_bounded() -> AnyResult<()> {
+        gstreamer::init()?;
+        let descriptor_count =
+            || -> std::io::Result<usize> { Ok(std::fs::read_dir("/proc/self/fd")?.count()) };
+        let before = descriptor_count()?;
+        let mut pools = HashMap::new();
+        for size in 257..2305 {
+            let data = vec![0x5a; size];
+            let buffer = frame_buffer(data.clone(), Duration::from_micros(123), &mut pools)?;
+            assert_eq!(buffer.size(), size);
+            assert_eq!(buffer.map_readable()?.as_slice(), data.as_slice());
+            assert_eq!(buffer.pts(), Some(ClockTime::from_useconds(123)));
+            assert_eq!(buffer.dts(), buffer.pts());
+        }
+        let after = descriptor_count()?;
+        eprintln!(
+            "variable frames: {} pools, descriptors {before} -> {after}",
+            pools.len()
+        );
+        assert!(
+            after <= before + 32,
+            "frame sizes leaked descriptors: {} -> {}",
+            before,
+            after
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn video_timestamp_passes_u32_microsecond_boundary() -> AnyResult<()> {
+        let mut vid_ts = u64::from(u32::MAX - 100);
+        let mut aud_ts = 0;
+        let data = BcMedia::Pframe(BcMediaPframe {
+            video_type: VideoType::H264,
+            microseconds: 0,
+            data: vec![],
+        });
+        send_to_sources(
+            data,
+            &mut HashMap::new(),
+            &None,
+            &None,
+            &mut vid_ts,
+            &mut aud_ts,
+            &stream_config(),
+        )?;
+        assert_eq!(vid_ts, u64::from(u32::MAX) - 100 + 50_000);
+        Ok(())
+    }
+
+    #[test]
+    fn audio_timestamps_pass_u32_microsecond_boundary() -> AnyResult<()> {
+        let frames = [
+            BcMedia::Aac(BcMediaAac {
+                data: vec![0xff, 0xf1, 0x60, 0, 0, 0, 0, 0],
+            }),
+            BcMedia::Adpcm(BcMediaAdpcm { data: vec![0; 260] }),
+        ];
+        for data in frames {
+            let mut aud_ts = u64::from(u32::MAX - 100);
+            let mut vid_ts = 0;
+            send_to_sources(
+                data,
+                &mut HashMap::new(),
+                &None,
+                &None,
+                &mut vid_ts,
+                &mut aud_ts,
+                &stream_config(),
+            )?;
+            assert!(aud_ts > u64::from(u32::MAX));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reused_buffers_preserve_payload_lengths_at_bucket_boundaries() -> AnyResult<()> {
+        gstreamer::init()?;
+        let mut pools = HashMap::new();
+        for size in [
+            1,
+            255,
+            256,
+            257,
+            511,
+            512,
+            513,
+            1000,
+            600,
+            1024,
+            700,
+            1024 * 1024,
+        ] {
+            let data = (0..size)
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>();
+            let buffer = frame_buffer(data.clone(), Duration::from_micros(456), &mut pools)?;
+            assert_eq!(buffer.size(), size);
+            assert_eq!(buffer.map_readable()?.as_slice(), data.as_slice());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_and_oversized_frames_do_not_create_pools() -> AnyResult<()> {
+        gstreamer::init()?;
+        let mut pools = HashMap::new();
+        for size in [0, 1024 * 1024 + 1, 1024 * 1024 + 2] {
+            let data = vec![0x7b; size];
+            let buffer = frame_buffer(data.clone(), Duration::from_micros(789), &mut pools)?;
+            assert_eq!(buffer.size(), size);
+            if size > 0 {
+                assert_eq!(buffer.map_readable()?.as_slice(), data.as_slice());
+            }
+            assert_eq!(buffer.pts(), Some(ClockTime::from_useconds(789)));
+        }
+        assert!(pools.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn retained_frames_do_not_block_the_streaming_thread() -> AnyResult<()> {
+        gstreamer::init()?;
+        let mut pools = HashMap::new();
+        let retained = (0..32)
+            .map(|_| frame_buffer(vec![0xaa; 260], Duration::ZERO, &mut pools))
+            .collect::<AnyResult<Vec<_>>>()?;
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = frame_buffer(vec![0xbb; 300], Duration::from_micros(321), &mut pools);
+            let _ = send.send(result);
+        });
+        let result = receive.recv_timeout(Duration::from_millis(500));
+        drop(retained);
+        worker
+            .join()
+            .map_err(|_| anyhow!("Allocation worker panicked"))?;
+        let buffer = result.context("Shared pool blocked while frames were retained")??;
+        assert_eq!(buffer.map_readable()?.as_slice(), vec![0xbb; 300]);
+        assert_eq!(buffer.pts(), Some(ClockTime::from_useconds(321)));
+        Ok(())
+    }
 }
