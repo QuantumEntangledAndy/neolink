@@ -1,5 +1,8 @@
 use gstreamer::ClockTime;
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Context, Result};
 use gstreamer::{prelude::*, Bin, Caps, Element, ElementFactory, FlowError, GhostPad};
@@ -243,8 +246,8 @@ pub(super) async fn make_factory(
                         // Run blocking code on a seperate thread
                         // This is not an async thread
                         std::thread::spawn(move || {
-                            let mut aud_ts = 0u32;
-                            let mut vid_ts = 0u32;
+                            let mut aud_ts = Duration::ZERO;
+                            let mut vid_ts = Duration::ZERO;
                             let mut pools = Default::default();
 
                             log::trace!("{name}::{stream}: Sending buffered frames");
@@ -257,9 +260,15 @@ pub(super) async fn make_factory(
                                     &mut vid_ts,
                                     &mut aud_ts,
                                     &stream_config,
+                                    None,
                                 )?;
                             }
 
+                            // From here on stamp frames by arrival time, on a clock that
+                            // continues where the buffered frames end
+                            let live_start = Instant::now()
+                                .checked_sub(vid_ts)
+                                .unwrap_or_else(Instant::now);
                             log::trace!("{name}::{stream}: Sending new frames");
                             while let Some(data) = media_rx.blocking_recv() {
                                 let r = send_to_sources(
@@ -270,6 +279,7 @@ pub(super) async fn make_factory(
                                     &mut vid_ts,
                                     &mut aud_ts,
                                     &stream_config,
+                                    Some(live_start),
                                 );
                                 if let Err(r) = &r {
                                     log::info!("Failed to send to source: {r:?}");
@@ -299,53 +309,79 @@ pub(super) async fn make_factory(
     Ok((factory, thread))
 }
 
+/// How far the audio timestamps may drift from the arrival time before they are re-anchored
+const MAX_AUDIO_DRIFT: Duration = Duration::from_millis(200);
+
+/// Stamp a frame and send it to its appsrc
+///
+/// Buffered frames (`live_start` is `None`) are spaced by the frame duration. Live
+/// frames are stamped with their arrival time since `live_start`: stamping them
+/// at 1/fps let the stream fall further and further behind whenever the camera
+/// sent more frames than its reported fps or its clock ran fast, since the
+/// pipeline plays at the pace of these timestamps. Audio keeps its sample-based
+/// spacing but is re-anchored to the arrival time when it drifts too far.
+#[allow(clippy::too_many_arguments)]
 fn send_to_sources(
     data: BcMedia,
     pools: &mut HashMap<usize, gstreamer::BufferPool>,
     vid_src: &Option<AppSrc>,
     aud_src: &Option<AppSrc>,
-    vid_ts: &mut u32,
-    aud_ts: &mut u32,
+    vid_ts: &mut Duration,
+    aud_ts: &mut Duration,
     stream_config: &StreamConfig,
+    live_start: Option<Instant>,
 ) -> AnyResult<()> {
+    // Audio: sample based, re-anchored to the arrival time if it drifts
+    let audio_ts = |aud_ts: &Duration| -> Duration {
+        if let Some(now) = live_start.map(|start| start.elapsed()) {
+            let drift = if *aud_ts > now {
+                *aud_ts - now
+            } else {
+                now - *aud_ts
+            };
+            if drift > MAX_AUDIO_DRIFT {
+                return now;
+            }
+        }
+        *aud_ts
+    };
     // Update TS
     match data {
         BcMedia::Aac(aac) => {
             let duration = aac.duration().expect("Could not calculate AAC duration");
+            let ts = audio_ts(aud_ts);
             if let Some(aud_src) = aud_src.as_ref() {
-                log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    aac.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                log::debug!("Sending AAC: {:?}", ts);
+                send_to_appsrc(aud_src, aac.data, ts, pools)?;
             }
-            *aud_ts += duration;
+            *aud_ts = ts + Duration::from_micros(duration as u64);
         }
         BcMedia::Adpcm(adpcm) => {
             let duration = adpcm
                 .duration()
                 .expect("Could not calculate ADPCM duration");
+            let ts = audio_ts(aud_ts);
             if let Some(aud_src) = aud_src.as_ref() {
-                log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    adpcm.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                log::trace!("Sending ADPCM: {:?}", ts);
+                send_to_appsrc(aud_src, adpcm.data, ts, pools)?;
             }
-            *aud_ts += duration;
+            *aud_ts = ts + Duration::from_micros(duration as u64);
         }
         BcMedia::Iframe(BcMediaIframe { data, .. })
         | BcMedia::Pframe(BcMediaPframe { data, .. }) => {
+            // Live: arrival time, but never before the previous frame
+            let ts = match live_start {
+                Some(start) => std::cmp::max(start.elapsed(), *vid_ts),
+                None => *vid_ts,
+            };
             if let Some(vid_src) = vid_src.as_ref() {
-                log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts as u64));
-                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts as u64), pools)?;
+                log::trace!("Sending VID: {:?}", ts);
+                send_to_appsrc(vid_src, data, ts, pools)?;
             }
-            const MICROSECONDS: u32 = 1000000;
-            *vid_ts += MICROSECONDS / stream_config.fps;
+            *vid_ts = match live_start {
+                Some(_) => ts + Duration::from_micros(1),
+                None => ts + Duration::from_micros(1_000_000 / stream_config.fps as u64),
+            };
         }
         _ => {}
     }
