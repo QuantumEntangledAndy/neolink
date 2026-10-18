@@ -1,5 +1,5 @@
 use gstreamer::ClockTime;
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use gstreamer::{prelude::*, Bin, Caps, Element, ElementFactory, FlowError, GhostPad};
@@ -245,13 +245,11 @@ pub(super) async fn make_factory(
                         std::thread::spawn(move || {
                             let mut aud_ts = 0u32;
                             let mut vid_ts = 0u32;
-                            let mut pools = Default::default();
 
                             log::trace!("{name}::{stream}: Sending buffered frames");
                             for buffered in buffer.drain(..) {
                                 send_to_sources(
                                     buffered,
-                                    &mut pools,
                                     &vid_src,
                                     &aud_src,
                                     &mut vid_ts,
@@ -264,7 +262,6 @@ pub(super) async fn make_factory(
                             while let Some(data) = media_rx.blocking_recv() {
                                 let r = send_to_sources(
                                     data,
-                                    &mut pools,
                                     &vid_src,
                                     &aud_src,
                                     &mut vid_ts,
@@ -301,7 +298,6 @@ pub(super) async fn make_factory(
 
 fn send_to_sources(
     data: BcMedia,
-    pools: &mut HashMap<usize, gstreamer::BufferPool>,
     vid_src: &Option<AppSrc>,
     aud_src: &Option<AppSrc>,
     vid_ts: &mut u32,
@@ -314,12 +310,7 @@ fn send_to_sources(
             let duration = aac.duration().expect("Could not calculate AAC duration");
             if let Some(aud_src) = aud_src.as_ref() {
                 log::debug!("Sending AAC: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    aac.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                send_to_appsrc(aud_src, aac.data, Duration::from_micros(*aud_ts as u64))?;
             }
             *aud_ts += duration;
         }
@@ -329,12 +320,7 @@ fn send_to_sources(
                 .expect("Could not calculate ADPCM duration");
             if let Some(aud_src) = aud_src.as_ref() {
                 log::trace!("Sending ADPCM: {:?}", Duration::from_micros(*aud_ts as u64));
-                send_to_appsrc(
-                    aud_src,
-                    adpcm.data,
-                    Duration::from_micros(*aud_ts as u64),
-                    pools,
-                )?;
+                send_to_appsrc(aud_src, adpcm.data, Duration::from_micros(*aud_ts as u64))?;
             }
             *aud_ts += duration;
         }
@@ -342,7 +328,7 @@ fn send_to_sources(
         | BcMedia::Pframe(BcMediaPframe { data, .. }) => {
             if let Some(vid_src) = vid_src.as_ref() {
                 log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts as u64));
-                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts as u64), pools)?;
+                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts as u64))?;
             }
             const MICROSECONDS: u32 = 1000000;
             *vid_ts += MICROSECONDS / stream_config.fps;
@@ -352,13 +338,28 @@ fn send_to_sources(
     Ok(())
 }
 
-fn send_to_appsrc(
-    appsrc: &AppSrc,
-    data: Vec<u8>,
-    mut ts: Duration,
-    pools: &mut HashMap<usize, gstreamer::BufferPool>,
-) -> AnyResult<()> {
+fn send_to_appsrc(appsrc: &AppSrc, data: Vec<u8>, mut ts: Duration) -> AnyResult<()> {
     check_live(appsrc)?; // Stop if appsrc is dropped
+
+    // Backpressure: the appsrc is non-blocking (set_block(false)) with a bounded
+    // max_bytes, so a slow client must be handled by us. Pause pushing once the
+    // queue is nearly full and resume once it has drained. This is evaluated on
+    // every call (including while paused) so a paused source can always recover -
+    // the old code only paused/resumed after a push, which was unreachable once
+    // the is_live() block below returns early in the paused state.
+    let max = appsrc.max_bytes();
+    if max > 0 {
+        let level = appsrc.current_level_bytes();
+        match appsrc.current_state() {
+            gstreamer::State::Playing if level >= max * 2 / 3 => {
+                appsrc.set_state(gstreamer::State::Paused)?;
+            }
+            gstreamer::State::Paused if level <= max / 3 => {
+                appsrc.set_state(gstreamer::State::Playing)?;
+            }
+            _ => {}
+        }
+    }
 
     // In live mode we follow the advice in
     // https://gstreamer.freedesktop.org/documentation/additional/design/element-source.html?gi-language=c#live-sources
@@ -380,34 +381,17 @@ fn send_to_appsrc(
             return Ok(());
         }
     }
+    // Build a buffer directly from the frame data. Compressed video frames are a
+    // different size almost every frame, so the previous per-size BufferPool kept
+    // one pool per distinct length alive for the whole stream - unbounded growth.
+    // A plain buffer is freed as soon as the pipeline releases it; from_mut_slice
+    // takes ownership of the Vec with no extra copy.
     let buf = {
-        let msg_size = data.len();
-
-        // Get or create a pool of this len
-        let pool = pools.entry(msg_size).or_insert_with_key(|size| {
-            let pool = gstreamer::BufferPool::new();
-            let mut pool_config = pool.config();
-            // Set a max buffers to ensure we don't grow in memory endlessly
-            pool_config.set_params(None, (*size) as u32, 8, 32);
-            pool.set_config(pool_config).unwrap();
-            pool.set_active(true).unwrap();
-            pool
-        });
-
-        // Get a buffer from the pool and then copy in the data
-        let gst_buf = {
-            let mut new_buf = pool.acquire_buffer(None).unwrap();
-            let gst_buf_mut = new_buf.get_mut().unwrap();
-            let time = ClockTime::from_useconds(ts.as_micros() as u64);
-            gst_buf_mut.set_dts(time);
-            gst_buf_mut.set_pts(time);
-            let mut gst_buf_data = gst_buf_mut.map_writable().unwrap();
-            gst_buf_data.copy_from_slice(data.as_slice());
-            drop(gst_buf_data);
-            new_buf
-        };
-
-        // Return the new buffer with the data
+        let mut gst_buf = gstreamer::Buffer::from_mut_slice(data);
+        let gst_buf_mut = gst_buf.get_mut().unwrap();
+        let time = ClockTime::from_useconds(ts.as_micros() as u64);
+        gst_buf_mut.set_dts(time);
+        gst_buf_mut.set_pts(time);
         gst_buf
     };
 
@@ -432,16 +416,6 @@ fn send_to_appsrc(
         }
         Err(e) => Err(anyhow!("Error in streaming: {e:?}")),
     }?;
-    // Check if we need to pause
-    if appsrc.current_level_bytes() >= appsrc.max_bytes() * 2 / 3
-        && matches!(appsrc.current_state(), gstreamer::State::Paused)
-    {
-        appsrc.set_state(gstreamer::State::Playing).unwrap();
-    } else if appsrc.current_level_bytes() <= appsrc.max_bytes() / 3
-        && matches!(appsrc.current_state(), gstreamer::State::Playing)
-    {
-        appsrc.set_state(gstreamer::State::Paused).unwrap();
-    }
     Ok(())
 }
 fn check_live(app: &AppSrc) -> Result<()> {
