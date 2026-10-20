@@ -112,6 +112,31 @@ using the terminal in the same folder the neolink binary is in.
 ./neolink rtsp --config=neolink.toml
 ```
 
+### Healthcheck
+
+The `healthcheck` subcommand reports a camera unhealthy when neolink is serving its
+stream to a client but has stopped delivering frames, and exits non-zero. It is meant for
+a container `HEALTHCHECK` (or any monitoring that acts on exit codes): if neolink ever
+wedges, the process keeps running and the RTSP port still answers, so a plain port check
+would miss it.
+
+```bash
+./neolink healthcheck --config=neolink.toml            # check every configured camera
+./neolink healthcheck --config=neolink.toml CameraName # check one camera
+./neolink healthcheck --config=neolink.toml --timeout 15
+```
+
+It does **not** open its own RTSP pull: Reolink cameras allow only a few concurrent
+streams, so connecting to probe would either be refused (a false "unhealthy") or steal a
+slot from a real consumer such as Frigate. Instead, while neolink serves a client it
+writes a small heartbeat (under `$NEOLINK_HEALTH_DIR`, default a `neolink-health` directory
+in the system temp dir) and refreshes it per frame; `healthcheck` reports a camera
+unhealthy only when that heartbeat is older than `--timeout` seconds (default 10). A camera
+that no client is pulling has no heartbeat and is treated as healthy - there are no frames
+that ought to be flowing. The Docker image ships with a `HEALTHCHECK` that runs this; note
+that a plain `docker run`/compose only marks the container unhealthy - restarting on that
+needs an orchestrator or a tool such as autoheal.
+
 ### Discovery
 
 To connect to a camera using a UID we need to find the IP address of the camera

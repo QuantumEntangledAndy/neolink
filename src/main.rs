@@ -41,6 +41,8 @@ mod cmdline;
 mod common;
 mod config;
 #[cfg(feature = "gstreamer")]
+mod healthcheck;
+#[cfg(feature = "gstreamer")]
 mod image;
 mod mqtt;
 mod pir;
@@ -113,6 +115,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Reboot(opts)) => {
             reboot::main(opts, neo_reactor.clone()).await?;
+        }
+        #[cfg(feature = "gstreamer")]
+        Some(Command::Healthcheck(opts)) => {
+            healthcheck::main(opts, config.clone()).await?;
         }
         Some(Command::Pir(opts)) => {
             pir::main(opts, neo_reactor.clone()).await?;

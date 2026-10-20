@@ -8,6 +8,7 @@ FROM docker.io/rust:slim-bookworm AS build
 ARG TARGETPLATFORM
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CARGO_BUILD_JOBS=6
 WORKDIR /usr/local/src/neolink
 COPY . /usr/local/src/neolink
 
@@ -90,4 +91,10 @@ ENV NEO_LINK_MODE="rtsp" NEO_LINK_PORT=8554
 CMD /usr/local/bin/neolink "${NEO_LINK_MODE}" --config /etc/neolink.toml
 ENTRYPOINT ["/entrypoint.sh"]
 EXPOSE ${NEO_LINK_PORT}
+
+# Report unhealthy if the bridge is up but no longer serving frames (a frozen bridge
+# keeps the process "running" and the RTSP port open, so only pulling a frame catches it).
+# Many-camera setups may need a longer --timeout or can check a single camera.
+HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
+  CMD /usr/local/bin/neolink healthcheck --config /etc/neolink.toml
 

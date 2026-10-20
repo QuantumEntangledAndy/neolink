@@ -173,6 +173,15 @@ pub(super) async fn make_factory(
                         let config = camera.config().await?.borrow().clone();
                         let mut media_rx = camera.stream_while_live(stream).await?;
 
+                        // Heartbeat so `neolink healthcheck` can tell a frozen
+                        // bridge (serving a client but no frames) from an idle one.
+                        // Stamped now and refreshed per frame below; removed when
+                        // the client goes away (this task ends and it is dropped).
+                        let heartbeat = crate::healthcheck::heartbeat::Heartbeat::new(
+                            &name,
+                            &stream.to_string(),
+                        );
+
                         log::trace!("{name}::{stream}: Learning camera stream type");
                         // Learn the camera data type
                         let mut buffer = vec![];
@@ -180,6 +189,7 @@ pub(super) async fn make_factory(
 
                         let mut stream_config = StreamConfig::new(&camera, stream).await?;
                         while let Some(media) = media_rx.recv().await {
+                            heartbeat.beat();
                             stream_config.update_from_media(&media);
                             buffer.push(media);
                             if frame_count > 10
@@ -262,6 +272,7 @@ pub(super) async fn make_factory(
 
                             log::trace!("{name}::{stream}: Sending new frames");
                             while let Some(data) = media_rx.blocking_recv() {
+                                heartbeat.beat();
                                 let r = send_to_sources(
                                     data,
                                     &mut pools,
