@@ -246,6 +246,8 @@ pub(super) async fn make_factory(
                             let mut aud_ts = 0u32;
                             let mut vid_ts = 0u32;
                             let mut pools = Default::default();
+                            // Gate the stream to start on the first keyframe; see send_to_sources.
+                            let mut seen_keyframe = false;
 
                             log::trace!("{name}::{stream}: Sending buffered frames");
                             for buffered in buffer.drain(..) {
@@ -256,6 +258,7 @@ pub(super) async fn make_factory(
                                     &aud_src,
                                     &mut vid_ts,
                                     &mut aud_ts,
+                                    &mut seen_keyframe,
                                     &stream_config,
                                 )?;
                             }
@@ -269,6 +272,7 @@ pub(super) async fn make_factory(
                                     &aud_src,
                                     &mut vid_ts,
                                     &mut aud_ts,
+                                    &mut seen_keyframe,
                                     &stream_config,
                                 );
                                 if let Err(r) = &r {
@@ -306,6 +310,7 @@ fn send_to_sources(
     aud_src: &Option<AppSrc>,
     vid_ts: &mut u32,
     aud_ts: &mut u32,
+    seen_keyframe: &mut bool,
     stream_config: &StreamConfig,
 ) -> AnyResult<()> {
     // Update TS
@@ -338,8 +343,26 @@ fn send_to_sources(
             }
             *aud_ts += duration;
         }
-        BcMedia::Iframe(BcMediaIframe { data, .. })
-        | BcMedia::Pframe(BcMediaPframe { data, .. }) => {
+        BcMedia::Iframe(BcMediaIframe { data, .. }) => {
+            // A keyframe carries the in-band SPS/PPS the parser needs, so the stream
+            // is safe to start here.
+            *seen_keyframe = true;
+            if let Some(vid_src) = vid_src.as_ref() {
+                log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts as u64));
+                send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts as u64), pools)?;
+            }
+            const MICROSECONDS: u32 = 1000000;
+            *vid_ts += MICROSECONDS / stream_config.fps;
+        }
+        BcMedia::Pframe(BcMediaPframe { data, .. }) => {
+            if !*seen_keyframe {
+                // Drop P-frames that arrive before the first keyframe. A client that
+                // starts mid-GOP has no SPS/PPS and no reference frame, so the parser
+                // emits garbage and a recorder writes empty/broken segments (seen after
+                // a Frigate restart). Don't advance the timestamp for a frame we drop,
+                // so the first keyframe we do send starts the stream cleanly.
+                return Ok(());
+            }
             if let Some(vid_src) = vid_src.as_ref() {
                 log::trace!("Sending VID: {:?}", Duration::from_micros(*vid_ts as u64));
                 send_to_appsrc(vid_src, data, Duration::from_micros(*vid_ts as u64), pools)?;
