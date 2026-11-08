@@ -101,6 +101,9 @@ impl AddressOrUid {
             },
             debug: camera_config.debug,
             max_discovery_retries: camera_config.max_discovery_retries,
+            tcp_ping_interval: camera_config
+                .tcp_ping_interval
+                .map(std::time::Duration::from_millis),
         };
 
         trace!("Camera Info: {:?}", options);

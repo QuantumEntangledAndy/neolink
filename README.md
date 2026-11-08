@@ -475,6 +475,56 @@ sent by the camera on motion or PIR alarms. To disable this you can set
 
 [Google removed the apis we were using for push notifications]
 
+### TCP Ping
+
+Some cameras reached over TCP stop sending stream data unless the client
+pings them regularly. Set `tcp_ping_interval` (in ms) to have neolink send a
+ping on that interval for as long as it is connected. It is unset by default,
+which sends no periodic ping.
+
+```toml
+[[cameras]]
+name = "Camera01"
+username = "admin"
+password = "password"
+address = "192.168.1.187:9000"
+tcp_ping_interval = 1000
+```
+
+#### Reolink B500
+
+The B500 is a PoE camera that is normally adopted by a Reolink NVR. It has no
+UID, so it must be configured by `address`. Adoption by an NVR is not
+required: it takes an address from any DHCP server on a normal LAN (a DHCP
+reservation keeps it stable), and uses `192.168.133.20` when there is no
+DHCP. While a stream is running it
+sends one stream-info header and then goes silent unless it is pinged
+about once a second, so use `tcp_ping_interval = 1000`.
+
+```toml
+[[cameras]]
+name = "B500"
+username = "admin"
+password = ""
+address = "192.168.133.20:9000"
+tcp_ping_interval = 1000
+```
+
+Both `mainStream` (2560x1920) and `subStream` (640x480) are available and run
+together over neolink's single connection.
+
+- **Password:** units shipped with an NVR kit may use an empty admin
+password. Write `password = ""` explicitly, and set a real password on the
+camera as soon as you can.
+
+- **One session:** the B500 serves a single TCP session on port 9000. No
+network isolation is needed, but nothing else may hold that session. A
+Reolink NVR on the same network grabs it, and neolink's connection is then
+closed by the camera a few ms after connecting; remove the NVR from that
+network (or the camera from the NVR's). Opening the Reolink app or another
+tool against the camera while neolink is connected has the same effect on
+whichever client comes second.
+
 ### Docker
 
 [Docker](https://hub.docker.com/r/quantumentangledandy/neolink) builds are also

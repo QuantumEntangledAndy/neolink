@@ -218,6 +218,17 @@ pub(crate) struct CameraConfig {
 
     #[serde(default = "default_false", alias = "idle", alias = "idle_disc")]
     pub(crate) idle_disconnect: bool,
+
+    #[validate(range(
+        min = 100,
+        max = 3600000,
+        message = "Invalid tcp ping interval (it's in ms)",
+        code = "tcp_ping_interval"
+    ))]
+    /// Interval in ms between keepalive pings on a TCP connection.
+    /// Unset sends no periodic ping.
+    #[serde(default)]
+    pub(crate) tcp_ping_interval: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Validate, Clone, PartialEq, Eq, Hash)]
@@ -531,5 +542,37 @@ fn validate_camera_config(camera_config: &CameraConfig) -> Result<(), Validation
             "Either camera address or uid must be given",
         )),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn camera(extra: &str) -> CameraConfig {
+        toml::from_str(&format!(
+            "name = \"cam\"\naddress = \"192.0.2.10:9000\"\nusername = \"admin\"\n{}",
+            extra
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn tcp_ping_interval_defaults_to_none() {
+        let cam = camera("");
+        assert_eq!(cam.tcp_ping_interval, None);
+        assert!(cam.validate().is_ok());
+    }
+
+    #[test]
+    fn tcp_ping_interval_accepts_ms() {
+        let cam = camera("tcp_ping_interval = 1000");
+        assert_eq!(cam.tcp_ping_interval, Some(1000));
+        assert!(cam.validate().is_ok());
+    }
+
+    #[test]
+    fn tcp_ping_interval_rejects_too_small() {
+        assert!(camera("tcp_ping_interval = 10").validate().is_err());
     }
 }

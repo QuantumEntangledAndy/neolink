@@ -84,6 +84,10 @@ address = "192.168.1.187:9000"
 #
 # print_format = "None"
 
+# Some TCP cameras (e.g. the Reolink B500) stop streaming unless they are
+# pinged regularly. Uncomment to send a ping every N ms. Unset sends none.
+# tcp_ping_interval = 1000
+
 
 [[cameras]]
 name = "storage shed"
