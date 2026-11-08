@@ -94,6 +94,7 @@ impl AddressOrUid {
                 password: camera_config.password.clone(),
             },
             debug: false,
+            tcp_ping_interval: None,
         };
 
         trace!("Camera Info: {:?}", options);

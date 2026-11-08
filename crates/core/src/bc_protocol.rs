@@ -72,7 +72,7 @@ pub struct BcCamera {
     channel_id: u8,
     connection: Arc<BcConnection>,
     logged_in: AtomicBool,
-    message_num: AtomicU16,
+    message_num: Arc<AtomicU16>,
     // Certain commands such as logout require the username/pass in plain text.... why....???
     credentials: Credentials,
     abilities: RwLock<HashMap<String, ReadKind>>,
@@ -104,6 +104,10 @@ pub struct BcCameraOpt {
     pub credentials: Credentials,
     /// Toggle debug print of underlying data
     pub debug: bool,
+    /// When set and the camera is reached over TCP, send a ping at this
+    /// interval for the lifetime of the connection. `None` sends no
+    /// periodic ping.
+    pub tcp_ping_interval: Option<std::time::Duration>,
 }
 
 /// Used to choose the print format of various status messages like battery levels
@@ -330,13 +334,13 @@ impl BcCamera {
         let username: String = options.credentials.username.clone();
         let passwd: Option<String> = options.credentials.password.clone();
 
-        let (sink, source): (BcConnSink, BcConnSource) = {
+        let (sink, source, is_tcp): (BcConnSink, BcConnSource, bool) = {
             match BcCamera::find_camera(options).await? {
                 CameraLocation::Tcp(addr) => {
                     let (x, r) = TcpSource::new(addr, &username, passwd.as_ref(), options.debug)
                         .await?
                         .split();
-                    (Box::new(x), Box::new(r))
+                    (Box::new(x), Box::new(r), true)
                 }
                 CameraLocation::Udp(discovery) => {
                     let (x, r) = UdpSource::new_from_discovery(
@@ -347,7 +351,7 @@ impl BcCamera {
                     )
                     .await?
                     .split();
-                    (Box::new(x), Box::new(r))
+                    (Box::new(x), Box::new(r), false)
                 }
             }
         };
@@ -357,7 +361,7 @@ impl BcCamera {
         trace!("Success");
         let me = Self {
             connection: Arc::new(conn),
-            message_num: AtomicU16::new(0),
+            message_num: Arc::new(AtomicU16::new(0)),
             channel_id: options.channel_id,
             logged_in: AtomicBool::new(false),
             credentials: Credentials::new(username, passwd),
@@ -365,6 +369,9 @@ impl BcCamera {
             cancel: CancellationToken::new(),
         };
         me.keepalive().await?;
+        if let (true, Some(interval)) = (is_tcp, options.tcp_ping_interval) {
+            me.start_tcp_ping(interval);
+        }
         Ok(me)
     }
 
