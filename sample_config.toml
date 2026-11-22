@@ -34,6 +34,10 @@ bind = "0.0.0.0"
 # mqtt.broker_addr = "192.168.1.122"
 # mqtt.port = 1883
 # mqtt.credentials = ["mqtt_user", "mqtt_password"]
+# Publish the config to neolink/config and apply configs published there.
+# Both default to true; disabling both is recommended on shared brokers.
+# mqtt.publish_config = true
+# mqtt.accept_config = true
 
 
 [[cameras]]
