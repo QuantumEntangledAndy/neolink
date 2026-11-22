@@ -176,16 +176,20 @@ pub(crate) async fn main(_: Opt, reactor: NeoReactor) -> Result<()> {
             _ = thread_cancel.cancelled() => AnyResult::Ok(()),
             v = async {
                 let mut curr_config = thread_config.borrow().clone();
-                let str = toml::to_string(&curr_config)?;
-                thread_instance.send_message("config", &str, true).await?;
+                if publish_config(&curr_config) {
+                    let str = toml::to_string(&curr_config)?;
+                    thread_instance.send_message("config", &str, true).await?;
+                }
                 loop {
                     curr_config = thread_config
                         .wait_for(|new_conf| new_conf != &curr_config)
                         .await?
                         .clone();
-                    let str = toml::to_string(&curr_config)?;
-                    thread_instance.send_message("config", &str, true).await?;
-                    log::trace!("UpdatedPosted config");
+                    if publish_config(&curr_config) {
+                        let str = toml::to_string(&curr_config)?;
+                        thread_instance.send_message("config", &str, true).await?;
+                        log::trace!("UpdatedPosted config");
+                    }
                 }
             } => v,
         }
@@ -202,6 +206,17 @@ pub(crate) async fn main(_: Opt, reactor: NeoReactor) -> Result<()> {
             v = async {
                 while let Ok(msg) = thread_instance.recv().await {
                     if msg.topic == "config" {
+                        if !accept_config(&thread_config.borrow()) {
+                            // With publish_config enabled our own retained config is echoed back
+                            let echo = toml::to_string(&*thread_config.borrow())
+                                .is_ok_and(|own| own == *msg.message);
+                            if !echo {
+                                log::warn!(
+                                    "Ignoring config received over MQTT: accept_config is disabled"
+                                );
+                            }
+                            continue;
+                        }
                         let config: Result<Config> = toml::from_str(&msg.message).with_context(|| {
                             format!("Failed to parse the MQTT {:?} config file", msg.topic)
                         });
@@ -281,6 +296,16 @@ pub(crate) async fn main(_: Opt, reactor: NeoReactor) -> Result<()> {
 
     drop(cancel_drop);
     Ok(())
+}
+
+/// Whether the config should be published to `neolink/config`
+fn publish_config(config: &Config) -> bool {
+    config.mqtt.as_ref().is_none_or(|mqtt| mqtt.publish_config)
+}
+
+/// Whether configs received on `neolink/config` should be applied
+fn accept_config(config: &Config) -> bool {
+    config.mqtt.as_ref().is_none_or(|mqtt| mqtt.accept_config)
 }
 
 async fn listen_on_camera(camera: NeoInstance, mqtt_instance: MqttInstance) -> Result<()> {

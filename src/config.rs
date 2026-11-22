@@ -67,6 +67,14 @@ pub(crate) struct MqttServerConfig {
 
     #[serde(default, skip_serializing)]
     pub(crate) client_auth: Option<(std::path::PathBuf, std::path::PathBuf)>,
+
+    /// Publish the current config (retained) to `neolink/config`
+    #[serde(default = "default_true")]
+    pub(crate) publish_config: bool,
+
+    /// Apply configs received on `neolink/config`
+    #[serde(default = "default_true")]
+    pub(crate) accept_config: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, Eq, PartialEq)]
@@ -531,5 +539,50 @@ fn validate_camera_config(camera_config: &CameraConfig) -> Result<(), Validation
             "Either camera address or uid must be given",
         )),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_mqtt(options: &str) -> MqttServerConfig {
+        let toml = format!(
+            r#"
+[mqtt]
+broker_addr = "127.0.0.1"
+port = 1883
+{options}
+
+[[cameras]]
+name = "cam"
+username = "admin"
+address = "127.0.0.1:9000"
+"#
+        );
+        let config: Config = toml::from_str(&toml).unwrap();
+        config.mqtt.unwrap()
+    }
+
+    #[test]
+    fn mqtt_config_topic_enabled_by_default() {
+        let mqtt = parse_mqtt("");
+        assert!(mqtt.publish_config);
+        assert!(mqtt.accept_config);
+    }
+
+    #[test]
+    fn mqtt_config_topic_can_be_disabled() {
+        let mqtt = parse_mqtt("publish_config = false\naccept_config = false");
+        assert!(!mqtt.publish_config);
+        assert!(!mqtt.accept_config);
+
+        let mqtt = parse_mqtt("publish_config = false");
+        assert!(!mqtt.publish_config);
+        assert!(mqtt.accept_config);
+
+        let mqtt = parse_mqtt("accept_config = false");
+        assert!(mqtt.publish_config);
+        assert!(!mqtt.accept_config);
     }
 }
