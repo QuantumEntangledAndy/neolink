@@ -207,6 +207,16 @@ Messages that are prefixed with `neolink/`
 - `/config/status` If you publish to `/config` then any errors from your
   publish config will show here, or `Ok(())` if no errors and finished loading
 
+Publishing the config to `/config` and applying configs received on it can be
+turned off in the `[mqtt]` section. Both default to `true`; disabling both is
+recommended when the broker is shared with other clients.
+
+```toml
+[mqtt]
+publish_config = false # do not publish the config to `neolink/config`
+accept_config = false  # ignore configs published to `neolink/config`
+```
+
 Messages that are prefixed with `neolink/{CAMERANAME}`
 
 Control messages:
