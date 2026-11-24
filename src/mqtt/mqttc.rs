@@ -570,21 +570,26 @@ impl LastWillMqtt {
         let thread_cancel = cancel.clone();
 
         tokio::task::spawn(async move {
-            loop {
-                let r = tokio::select! {
-                    _ = thread_cancel.cancelled() => AnyResult::Ok(()),
-                    v = connection.poll() =>  {
-                        v?;
-                        AnyResult::Ok(())
+            // Keep the connection alive until the LastWillMqtt is dropped.
+            //
+            // Cancellation must end the loop: `cancelled()` stays ready once the
+            // token is cancelled, so continuing here would spin this task forever
+            // (one busy task per dropped LastWillMqtt, i.e. two per camera reconnect).
+            let r = loop {
+                tokio::select! {
+                    _ = thread_cancel.cancelled() => break AnyResult::Ok(()),
+                    v = connection.poll() => {
+                        if let Err(e) = v {
+                            break Err(e.into());
+                        }
                     },
-                };
-                if r.is_ok() {
-                    continue;
                 }
-                break r;
-            }?;
+            };
+            // Dropping the event loop closes the socket without an MQTT DISCONNECT,
+            // so the broker publishes the last will message.
+            drop(connection);
             drop(client);
-            AnyResult::Ok(())
+            r
         });
 
         Ok(LastWillMqtt { cancel })
